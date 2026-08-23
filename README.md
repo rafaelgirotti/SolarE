@@ -97,9 +97,18 @@ each field is used for, and confirm your inverter is `tlx`-family (via growattSe
 uv run solare
 ```
 
-Launches the Textual dashboard: real CPU/GPU/RAM stats read live from your machine, alongside
-simulated encode-job progress (there's no real encoding engine wired in yet - see
-[Roadmap](#roadmap)). `Ctrl+C` quits.
+Launches the Textual dashboard. Real CPU/GPU/RAM stats are read live from your machine; encode-job
+progress (chunks, ETA, log lines) is simulated once a config is loaded - there's no real encoding
+engine wired in yet, see [Roadmap](#roadmap).
+
+With no arguments, the dashboard starts idle - press `C` or click **Choose config** to pick a
+`.json` file, then **Start**. `Ctrl+C` quits; `P` pauses/resumes, `T` stops.
+
+Skip the picker and jump straight in:
+
+```bash
+uv run solare --config config/my-title.json --start
+```
 
 ## Development
 

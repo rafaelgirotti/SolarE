@@ -1,16 +1,14 @@
 """The data one dashboard render needs.
 
-Kept deliberately separate from where the data comes from - the mock source (`mock.py`) and the
-real `solare.engine` job runner (once it exists) both just need to produce one of these each tick;
+Kept deliberately separate from where the data comes from - `mock.py`'s `MockJobSource` and the
+real `solare.engine` job runner (once it exists) both just need to produce a `JobState` each tick;
 `app.py`'s rendering code doesn't change either way.
 """
 
 from __future__ import annotations
 
 import datetime
-from dataclasses import dataclass, field
-
-from solare.hwmonitor import HardwareSnapshot
+from dataclasses import dataclass
 
 
 @dataclass
@@ -44,11 +42,3 @@ class SolarState:
     pv_strings: list[tuple[float, float]]  # (volts, amps) per active MPPT string
     ac_voltage: float
     ac_frequency: float
-
-
-@dataclass
-class DashboardState:
-    job: JobState
-    hw: HardwareSnapshot
-    solar: SolarState
-    log_lines: list[str] = field(default_factory=list)

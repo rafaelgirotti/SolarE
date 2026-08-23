@@ -49,6 +49,30 @@ Screen {
     color: #33cc33;
     margin-top: 1;
     padding: 0 1;
+    height: 1fr;
+}
+
+#controls {
+    height: 3;
+    align: center middle;
+    background: #000000;
+}
+
+#controls Button {
+    margin: 0 1;
+    min-width: 18;
+    background: #000000;
+    color: #33cc33;
+    border: heavy #33cc33;
+}
+
+#controls Button:hover {
+    background: #1a3a1a;
+}
+
+#controls Button:disabled {
+    color: #4a5a4a;
+    border: heavy #4a5a4a;
 }
 
 Footer {
@@ -64,4 +88,27 @@ Footer > .footer-key {
 Footer > .footer-description {
     background: #000000;
     color: #4a5a4a;
+}
+
+ConfigPickerScreen {
+    align: center middle;
+}
+
+#picker_dialog {
+    width: 80%;
+    height: 80%;
+    border: heavy #55ff55;
+    background: #000000;
+    padding: 1 2;
+}
+
+#picker_title {
+    color: #55ff55;
+    text-style: bold;
+    height: 1;
+}
+
+#picker_tree {
+    background: #000000;
+    color: #33cc33;
 }

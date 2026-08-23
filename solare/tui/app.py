@@ -1,39 +1,66 @@
-"""SolarE dashboard shell - Phase 3: real layout and retro styling, mock encode-job data.
+"""SolarE dashboard - Phase 3: real layout/styling/interaction, mock encode-job progress.
 
-Hardware stats are real (`solare.hwmonitor`, read live from this machine). Encode-job progress
-(chunks, ETA, log lines) and solar generation are simulated via `mock.py` - there's no
-`solare.engine` orchestration yet, see docs/ARCHITECTURE.md and the README roadmap.
+Hardware stats are real (`solare.hwmonitor`, polled independently of any loaded job - works even
+before a config is chosen). Encode-job progress (chunks, ETA, log lines) is simulated via
+`mock.MockJobSource` once a real per-title config is loaded - there's no `solare.engine`
+orchestration yet, see docs/ARCHITECTURE.md and the README roadmap. Title/settings/paths shown
+once a config is loaded are real, not mocked.
 """
 
 from __future__ import annotations
 
+import argparse
 import datetime
+from enum import Enum
 from pathlib import Path
 
 from textual.app import App, ComposeResult
-from textual.containers import Vertical
-from textual.widgets import Footer, RichLog, Static
+from textual.containers import Horizontal, Vertical
+from textual.widgets import Button, Footer, RichLog, Static
 
+from solare.engine import TitleConfig, load_config
+from solare.hwmonitor import HardwareMonitor, HardwareSnapshot
 from solare.tui import colors, links
-from solare.tui.mock import MockDataSource
+from solare.tui.mock import MockJobSource, mock_solar_state
+from solare.tui.picker import ConfigPickerScreen
 from solare.tui.progress_bar import TextProgressBar
-from solare.tui.state import DashboardState
+from solare.tui.state import JobState, SolarState
 
 _REFRESH_INTERVAL_SECONDS = 1.0
 _LABEL_WIDTH = 11  # fits "Generation" (10 chars), the longest label used, plus a 1-space gap
+_DEMO_ITEM_INDEX = 3
+_DEMO_ITEM_COUNT = 12
 
 
 def _label(text: str) -> str:
     return f"{text:<{_LABEL_WIDTH}}"
 
 
+class AppPhase(Enum):
+    IDLE = "idle"  # no config loaded
+    LOADED = "loaded"  # config loaded, job not started
+    RUNNING = "running"
+    PAUSED = "paused"
+
+
 class SolarEApp(App):
     CSS_PATH = Path(__file__).parent / "theme.tcss"
     TITLE = "SolarE"
+    BINDINGS = [
+        ("c", "choose_config", "Choose config"),
+        ("s", "start", "Start"),
+        ("p", "toggle_pause", "Pause/Resume"),
+        ("t", "stop", "Stop"),
+    ]
 
-    def __init__(self) -> None:
+    def __init__(self, config_path: str | Path | None = None, auto_start: bool = False) -> None:
         super().__init__()
-        self._data_source = MockDataSource(item_index=3, item_count=12)
+        self._hw_monitor = HardwareMonitor()
+        self._job_source: MockJobSource | None = None
+        self._config: TitleConfig | None = None
+        self._phase = AppPhase.IDLE
+        self._pending_config_path = config_path
+        self._pending_auto_start = auto_start
         self._rendered_log_count = 0
 
     def compose(self) -> ComposeResult:
@@ -49,27 +76,118 @@ class SolarEApp(App):
         yield Static(id="hw_panel")
         yield Static(id="solar_panel")
         yield RichLog(id="log_panel", max_lines=500, wrap=False, highlight=False)
+        with Horizontal(id="controls"):
+            yield Button("Choose config [C]", id="btn_choose")
+            yield Button("Start [S]", id="btn_start")
+            yield Button("Pause [P]", id="btn_pause")
+            yield Button("Stop [T]", id="btn_stop")
         yield Footer()
 
     def on_mount(self) -> None:
         self.query_one("#hw_panel", Static).border_title = " Hardware "
         self.query_one("#solar_panel", Static).border_title = " Solar "
         self.query_one("#log_panel", RichLog).border_title = " Recent log output "
+
+        if self._pending_config_path:
+            self._load_config(self._pending_config_path)
+            if self._pending_auto_start and self._phase == AppPhase.LOADED:
+                self.action_start()
+
+        self._update_controls()
         self._refresh()
         self.set_interval(_REFRESH_INTERVAL_SECONDS, self._refresh)
 
     def on_unmount(self) -> None:
-        self._data_source.close()
+        self._hw_monitor.close()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        {
+            "btn_choose": self.action_choose_config,
+            "btn_start": self.action_start,
+            "btn_pause": self.action_toggle_pause,
+            "btn_stop": self.action_stop,
+        }[event.button.id]()
+
+    def action_choose_config(self) -> None:
+        if self._phase in (AppPhase.RUNNING, AppPhase.PAUSED):
+            return
+        self.push_screen(ConfigPickerScreen(start_path=Path.cwd()), self._on_config_chosen)
+
+    def _on_config_chosen(self, path: Path | None) -> None:
+        if path is not None:
+            self._load_config(path)
+            self._update_controls()
+
+    def _load_config(self, path: str | Path) -> None:
+        try:
+            config = load_config(path)
+        except (OSError, KeyError, ValueError) as e:
+            self.notify(f"Couldn't load {path}: {e}", severity="error")
+            return
+        self._config = config
+        self._job_source = MockJobSource(
+            config, item_index=_DEMO_ITEM_INDEX, item_count=_DEMO_ITEM_COUNT
+        )
+        self._rendered_log_count = 0
+        self._phase = AppPhase.LOADED
+
+    def action_start(self) -> None:
+        if self._phase != AppPhase.LOADED:
+            return
+        self._phase = AppPhase.RUNNING
+        self._update_controls()
+
+    def action_toggle_pause(self) -> None:
+        if self._phase == AppPhase.RUNNING:
+            self._job_source.pause()
+            self._phase = AppPhase.PAUSED
+        elif self._phase == AppPhase.PAUSED:
+            self._job_source.resume()
+            self._phase = AppPhase.RUNNING
+        else:
+            return
+        self._update_controls()
+
+    def action_stop(self) -> None:
+        if self._phase not in (AppPhase.RUNNING, AppPhase.PAUSED):
+            return
+        self._job_source.reset()
+        self._rendered_log_count = 0
+        self._phase = AppPhase.LOADED
+        self._update_controls()
+
+    def _update_controls(self) -> None:
+        self.query_one("#btn_choose", Button).disabled = self._phase in (
+            AppPhase.RUNNING,
+            AppPhase.PAUSED,
+        )
+        self.query_one("#btn_start", Button).disabled = self._phase != AppPhase.LOADED
+        pause_btn = self.query_one("#btn_pause", Button)
+        pause_btn.disabled = self._phase not in (AppPhase.RUNNING, AppPhase.PAUSED)
+        pause_btn.label = "Resume [P]" if self._phase == AppPhase.PAUSED else "Pause [P]"
+        self.query_one("#btn_stop", Button).disabled = self._phase not in (
+            AppPhase.RUNNING,
+            AppPhase.PAUSED,
+        )
 
     def _refresh(self) -> None:
-        state = self._data_source.poll()
-        self._render_job_panel(state)
-        self._render_hw_panel(state)
-        self._render_solar_panel(state)
-        self._render_log_panel(state)
+        self._render_hw_panel(self._hw_monitor.poll())
+        self._render_solar_panel(mock_solar_state())
+        if self._job_source is not None:
+            self._render_job_panel(self._job_source.poll_job())
+            self._render_log_panel(self._job_source.log_lines)
+        else:
+            self._render_job_idle()
 
-    def _render_job_panel(self, state: DashboardState) -> None:
-        job = state.job
+    def _render_job_idle(self) -> None:
+        self.query_one("#job_meta", Static).update(
+            "No config loaded - press [b]C[/b] or click [b]Choose config[/b] below to pick one."
+        )
+        self.query_one("#chunks_bar", TextProgressBar).update_progress(0, 1, "")
+        self.query_one("#job_footer", Static).update("")
+        self.query_one("#job_panel", Vertical).border_title = " SolarE "
+
+    def _render_job_panel(self, job: JobState) -> None:
         elapsed = datetime.datetime.now() - job.started_at
         now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -104,8 +222,7 @@ class SolarEApp(App):
         panel = self.query_one("#job_panel", Vertical)
         panel.border_title = f" {job.title} - {job.phase} ({job.item_index}/{job.item_count}) "
 
-    def _render_hw_panel(self, state: DashboardState) -> None:
-        hw = state.hw
+    def _render_hw_panel(self, hw: HardwareSnapshot) -> None:
         temp_color = colors.rising_gradient(
             hw.cpu_temp_c, colors.CPU_TEMP_WARN_C, colors.CPU_TEMP_DANGER_C
         )
@@ -136,8 +253,7 @@ class SolarEApp(App):
         )
         self.query_one("#hw_panel", Static).update("\n".join(lines))
 
-    def _render_solar_panel(self, state: DashboardState) -> None:
-        solar = state.solar
+    def _render_solar_panel(self, solar: SolarState) -> None:
         # Producing-or-not is a status, not a risk gradient - reusing SAFE/WARN/DANGER here would
         # blend into (producing) or clash with (not producing) the rest of the screen's own use of
         # those colors for actual hardware risk. Brightness instead: bold bright phosphor when
@@ -163,11 +279,11 @@ class SolarEApp(App):
         ]
         self.query_one("#solar_panel", Static).update("\n".join(lines))
 
-    def _render_log_panel(self, state: DashboardState) -> None:
+    def _render_log_panel(self, log_lines: list[str]) -> None:
         log = self.query_one("#log_panel", RichLog)
-        for line in state.log_lines[self._rendered_log_count :]:
+        for line in log_lines[self._rendered_log_count :]:
             log.write(line)
-        self._rendered_log_count = len(state.log_lines)
+        self._rendered_log_count = len(log_lines)
 
 
 def _format_timedelta(td: datetime.timedelta) -> str:
@@ -178,7 +294,13 @@ def _format_timedelta(td: datetime.timedelta) -> str:
 
 
 def run() -> None:
-    SolarEApp().run()
+    parser = argparse.ArgumentParser(prog="solare", description="SolarE dashboard")
+    parser.add_argument("--config", type=str, default=None, help="Title config .json to load on startup")
+    parser.add_argument("--start", action="store_true", help="Start immediately (requires --config)")
+    args = parser.parse_args()
+    if args.start and not args.config:
+        parser.error("--start requires --config")
+    SolarEApp(config_path=args.config, auto_start=args.start).run()
 
 
 if __name__ == "__main__":
