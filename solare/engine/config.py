@@ -21,6 +21,10 @@ class VideoSettings:
     encoder_params: str
     crop: str | None = None
     dovi_rpu: str | None = None
+    chunk_method: str = "lsmash"  # av1an -m; override to match an already-existing --temp dir's
+    # own chunk method when resuming a run that used a different one (see temp_dir below)
+    temp_dir: str | None = None  # override av1an's --temp path (default: computed next to the
+    # output file); needed to resume progress sitting in a folder outside that naming convention
 
 
 @dataclass
@@ -128,6 +132,8 @@ def load_config(path: str | Path) -> TitleConfig:
         encoder_params=video_data.get("encoderParams", ""),
         crop=video_data.get("crop"),
         dovi_rpu=video_data.get("doviRpu"),
+        chunk_method=video_data.get("chunkMethod", "lsmash"),
+        temp_dir=video_data.get("tempDir"),
     )
 
     source = data["source"]

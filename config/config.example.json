@@ -21,7 +21,9 @@
     "pixFmt": "yuv420p10le",
     "crop": null,
     "encoderParams": "--no-sao --no-cutree --no-strong-intra-smoothing --deblock -1:-1 --psy-rd 2.0 --psy-rdoq 2.0 --aq-mode 3 --aq-strength 0.6",
-    "doviRpu": null
+    "doviRpu": null,
+    "chunkMethod": "lsmash",
+    "tempDir": null
   },
   "audio": {
     "sourceLanguage": "jpn",
