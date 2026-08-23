@@ -38,9 +38,11 @@ class Av1anRunner:
 
     def __init__(self, config: TitleConfig, src_file: Path, video_out: Path, temp_dir: Path):
         self._config = config
-        self._src_file = src_file
-        self._video_out = video_out
-        self._temp_dir = temp_dir
+        # Resolved to absolute up front - av1an is launched with its cwd changed (see start()),
+        # so any relative path here would otherwise resolve against the wrong directory.
+        self._src_file = src_file.resolve()
+        self._video_out = video_out.resolve()
+        self._temp_dir = temp_dir.resolve()
         self._process: subprocess.Popen | None = None
         self._suspended_pids: set[int] = set()
 
@@ -67,13 +69,32 @@ class Av1anRunner:
             args += ["--pix-format", video.pix_fmt]
         if video.crop:
             args += ["-f", f"-vf crop={video.crop}"]
-        if self._temp_dir.is_dir():
+        # done.json only exists once a real prior run has made progress - a better resumability
+        # signal than bare directory existence, which start() now creates unconditionally before
+        # launching (needed as av1an's own cwd), so it would otherwise always be true.
+        if (self._temp_dir / "done.json").exists():
             args += ["-r"]  # resume from an existing --temp dir rather than starting over
         return args
 
     def start(self) -> None:
+        # av1an's own log defaults to ./logs/av1an.log.<date>, relative to wherever the process
+        # was launched from - explicitly passing --log-file to redirect it was tried and
+        # confirmed unreliable on this av1an build (silently produced no file at all, even with
+        # the target directory pre-created). Controlling cwd instead is more robust: av1an's
+        # *default* log path then resolves inside the video output's own directory, fully
+        # contained the same way every other av1an-generated file already is.
+        #
+        # Deliberately the output directory, not temp_dir itself: cwd == the exact --temp path
+        # av1an is about to create/manage made it fail outright (STATUS_DLL_NOT_FOUND-style
+        # generic crash, no log, nothing written) - likely a conflict between av1an trying to
+        # (re)create that directory and it also being the process's own working directory.
+        self._temp_dir.mkdir(parents=True, exist_ok=True)
+        self._video_out.parent.mkdir(parents=True, exist_ok=True)
         self._process = subprocess.Popen(
-            self.build_args(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            self.build_args(),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            cwd=str(self._video_out.parent),
         )
 
     def poll(self) -> int | None:

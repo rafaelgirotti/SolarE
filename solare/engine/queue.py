@@ -69,6 +69,7 @@ def build_queue(config: TitleConfig) -> list[QueueItem]:
                 f"check the config is pointing at the right title, and the source hasn't already "
                 f"been moved or deleted."
             )
+        out_folder.mkdir(parents=True, exist_ok=True)
 
         files = sorted(src_folder.glob("*.mkv"), key=lambda p: p.name)
         if config.file_match_regex:
