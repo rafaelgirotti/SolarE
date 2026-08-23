@@ -1,0 +1,55 @@
+/* Retro monochrome-phosphor terminal theme - see docs/ARCHITECTURE.md. Dense text, strong panel
+   framing, green/amber palette, no shader/glow effects. */
+
+Screen {
+    background: #000000;
+    color: #33cc33;
+}
+
+#dashboard {
+    padding: 0 1;
+}
+
+#job_panel {
+    border: heavy #33cc33;
+    border-title-color: #55ff55;
+    border-title-style: bold;
+    color: #33cc33;
+    height: auto;
+    padding: 0 1;
+}
+
+#hw_panel {
+    border: heavy #ffb000;
+    border-title-color: #ffb000;
+    border-title-style: bold;
+    color: #ffb000;
+    height: auto;
+    padding: 0 1;
+    margin-top: 1;
+}
+
+#log_panel {
+    border: heavy #33cc33;
+    border-title-color: #55ff55;
+    border-title-style: bold;
+    background: #000000;
+    color: #33cc33;
+    margin-top: 1;
+    padding: 0 1;
+}
+
+Footer {
+    background: #000000;
+    color: #4a5a4a;
+}
+
+Footer > .footer-key {
+    background: #000000;
+    color: #55ff55;
+}
+
+Footer > .footer-description {
+    background: #000000;
+    color: #4a5a4a;
+}

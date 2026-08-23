@@ -23,8 +23,9 @@ real OS-level pause/resume, and live hardware monitoring.
 
 ## Status
 
-Early development. The project skeleton, solar polling, and hardware monitoring are in place;
-the Textual dashboard and the `av1an` orchestration engine itself are still being built. See
+Early development. The project skeleton, solar polling, hardware monitoring, and the dashboard
+shell are in place - the dashboard currently shows real hardware stats alongside simulated encode
+progress, since the `av1an` orchestration engine itself doesn't exist yet. See
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for design details and [Roadmap](#roadmap) below
 for what's next.
 
@@ -90,6 +91,16 @@ cp credentials.example.json credentials.json
 each field is used for, and confirm your inverter is `tlx`-family (via growattServer's
 `device_list`) before relying on it - other Growatt device families expose different data.
 
+## Running the dashboard
+
+```bash
+uv run solare
+```
+
+Launches the Textual dashboard: real CPU/GPU/RAM stats read live from your machine, alongside
+simulated encode-job progress (there's no real encoding engine wired in yet - see
+[Roadmap](#roadmap)). `Ctrl+C` quits.
+
 ## Development
 
 ```bash
@@ -113,7 +124,7 @@ uv sync && uv run python -c "import solare; import solare.engine; import solare.
 
 - [x] Project skeleton, `uv`/dependency setup, architecture docs
 - [x] Solar polling and hardware-monitoring modules
-- [ ] Textual dashboard shell (mock data)
+- [x] Textual dashboard shell (mock data)
 - [ ] Config schema + job queue engine
 - [ ] `av1an` orchestration with process-tree-aware pause/resume
 - [ ] Dolby Vision injection + audio/subtitle/mux pipeline
