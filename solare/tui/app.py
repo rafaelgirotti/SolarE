@@ -4,7 +4,9 @@ Hardware stats are real (`solare.hwmonitor`, polled independently of any loaded 
 before a config is chosen). Once a config is loaded and started, encode-job progress comes from a
 real `solare.engine.JobRunner` (via `LiveJobSource`) - a real `av1an` process, real Dolby
 Vision/audio/mux passes, running in a background thread so the dashboard's own refresh tick never
-blocks on it. Solar generation is still simulated (see `mock.py` for why).
+blocks on it. Solar generation is real too (`solare.tui.solar_poller`, gated on a gitignored
+`credentials.json` at the repo root - see README) - only what `plant_energy_data` actually
+reports, no weather/PV-string/AC-voltage detail (a different, unwired Growatt endpoint).
 """
 
 from __future__ import annotations
@@ -20,15 +22,17 @@ from textual.widgets import Button, Footer, RichLog, Static
 
 from solare.engine import JobRunner, TitleConfig, load_config, prepend_local_tools_to_path
 from solare.hwmonitor import HardwareMonitor, HardwareSnapshot
+from solare.solar import GrowattCredentials
 from solare.tui import colors, links
 from solare.tui.live_job import LiveJobSource
-from solare.tui.mock import mock_solar_state
 from solare.tui.picker import ConfigPickerScreen
 from solare.tui.progress_bar import TextProgressBar
-from solare.tui.state import JobState, SolarState
+from solare.tui.solar_poller import SolarPoller
+from solare.tui.state import ActiveChunkInfo, JobState, SolarState
 
 _REFRESH_INTERVAL_SECONDS = 1.0
 _LABEL_WIDTH = 11  # fits "Generation" (10 chars), the longest label used, plus a 1-space gap
+_CREDENTIALS_PATH = Path(__file__).resolve().parents[2] / "credentials.json"
 
 
 def _label(text: str) -> str:
@@ -61,6 +65,13 @@ class SolarEApp(App):
         self._pending_config_path = config_path
         self._pending_auto_start = auto_start
         self._rendered_log_count = 0
+        self._solar_poller: SolarPoller | None = None
+        self._solar_unavailable_reason: str | None = None
+        if _CREDENTIALS_PATH.is_file():
+            try:
+                self._solar_poller = SolarPoller(GrowattCredentials.from_file(_CREDENTIALS_PATH))
+            except RuntimeError as e:
+                self._solar_unavailable_reason = str(e)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="job_panel"):
@@ -87,6 +98,9 @@ class SolarEApp(App):
         self.query_one("#solar_panel", Static).border_title = " Solar "
         self.query_one("#log_panel", RichLog).border_title = " Recent log output "
 
+        if self._solar_poller is not None:
+            self._solar_poller.start()
+
         if self._pending_config_path:
             self._load_config(self._pending_config_path)
             if self._pending_auto_start and self._phase == AppPhase.LOADED:
@@ -98,6 +112,8 @@ class SolarEApp(App):
 
     def on_unmount(self) -> None:
         self._hw_monitor.close()
+        if self._solar_poller is not None:
+            self._solar_poller.stop()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         {
@@ -178,7 +194,7 @@ class SolarEApp(App):
 
     def _refresh(self) -> None:
         self._render_hw_panel(self._hw_monitor.poll())
-        self._render_solar_panel(mock_solar_state())
+        self._render_solar_panel(self._current_solar_state())
         if self._job_source is not None:
             self._render_job_panel(self._job_source.poll_job())
             self._render_log_panel(self._job_source.log_lines)
@@ -203,6 +219,8 @@ class SolarEApp(App):
         ]
         if job.batch_summary:
             meta_lines.append(f"[b]{_label('Batch')}[/b]{job.batch_summary}")
+        if job.active_chunks:
+            meta_lines.append(f"[b]{_label('Chunks')}[/b]{self._format_active_chunks(job.active_chunks)}")
         self.query_one("#job_meta", Static).update("\n".join(meta_lines))
 
         pct = 100.0 * job.chunks_done / job.chunks_total
@@ -227,6 +245,20 @@ class SolarEApp(App):
 
         panel = self.query_one("#job_panel", Vertical)
         panel.border_title = f" {job.title} - {job.phase} ({job.item_index}/{job.item_count}) "
+
+    def _format_active_chunks(self, active_chunks: list[ActiveChunkInfo]) -> str:
+        """Per-worker in-progress chunk timing - flags a chunk running far past its recent peers'
+        pace as possibly stuck, since a hung worker otherwise looks identical to a slow one until
+        someone happens to notice CPU usage has quietly dropped to near-zero."""
+        parts = []
+        for chunk in active_chunks:
+            elapsed = _format_seconds(chunk.elapsed_seconds)
+            avg = _format_seconds(chunk.avg_seconds) if chunk.avg_seconds is not None else "n/a"
+            text = f"worker {chunk.worker_id}: chunk {chunk.chunk_index} - {elapsed} (avg {avg})"
+            if chunk.stuck:
+                text = f"[{colors.DANGER}]{text} - POSSIBLY STUCK[/{colors.DANGER}]"
+            parts.append(text)
+        return "    ".join(parts)
 
     def _render_hw_panel(self, hw: HardwareSnapshot) -> None:
         temp_color = colors.rising_gradient(
@@ -255,11 +287,52 @@ class SolarEApp(App):
             hw.ram_load_pct, colors.RAM_LOAD_WARN_PCT, colors.RAM_LOAD_DANGER_PCT
         )
         lines.append(
-            f"[b]{_label('RAM')}[/b]{hw.ram_used_gb} GB used ([{ram_color}]{hw.ram_load_pct}%[/{ram_color}])"
+            f"[b]{_label('RAM')}[/b]{hw.ram_used_gb:.1f}/{hw.ram_total_gb:.1f} GB "
+            f"([{ram_color}]{hw.ram_load_pct}%[/{ram_color}])"
         )
         self.query_one("#hw_panel", Static).update("\n".join(lines))
 
-    def _render_solar_panel(self, solar: SolarState) -> None:
+    def _current_solar_state(self) -> SolarState | None:
+        """None covers every non-happy-path case (no credentials.json, first poll still pending,
+        poll failed with nothing cached yet) - the panel renders one explanatory line for all of
+        them rather than guessing at placeholder numbers."""
+        if self._solar_poller is None:
+            return None
+        summary, checked_at, error = self._solar_poller.get_latest()
+        if summary is None or checked_at is None:
+            return None
+        age_seconds = (datetime.datetime.now() - checked_at).total_seconds()
+        age_text = "now" if age_seconds < 60 else f"{int(age_seconds // 60)}m ago"
+        capacity_pct = (
+            round(100.0 * summary.current_power_w / summary.nominal_power_w, 1)
+            if summary.nominal_power_w
+            else 0.0
+        )
+        line = f"{summary.current_power_w:.0f} W (updated: {age_text})"
+        if error:
+            line += " [last poll failed, showing stale data]"
+        return SolarState(
+            line=line,
+            ok=summary.current_power_w > 0,
+            today_kwh=summary.today_kwh,
+            month_kwh=summary.month_kwh,
+            total_kwh=summary.total_kwh,
+            capacity_pct=capacity_pct,
+            nominal_power_w=summary.nominal_power_w,
+        )
+
+    def _render_solar_panel(self, solar: SolarState | None) -> None:
+        panel = self.query_one("#solar_panel", Static)
+        if solar is None:
+            if self._solar_unavailable_reason is not None:
+                reason = self._solar_unavailable_reason
+            elif self._solar_poller is None:
+                reason = "not configured - add credentials.json (see README)"
+            else:
+                reason = "waiting for first Growatt poll..."
+            panel.update(f"[{colors.UNKNOWN}]{reason}[/{colors.UNKNOWN}]")
+            return
+
         # Producing-or-not is a status, not a risk gradient - reusing SAFE/WARN/DANGER here would
         # blend into (producing) or clash with (not producing) the rest of the screen's own use of
         # those colors for actual hardware risk. Brightness instead: bold bright phosphor when
@@ -267,21 +340,13 @@ class SolarEApp(App):
         # would signal this anyway (one hue, varying intensity), and keeps green/amber/red meaning
         # "risk level" everywhere else on the dashboard.
         color = colors.PHOSPHOR if solar.ok else colors.UNKNOWN
-        pv_text = "  ".join(f"PV{i + 1} {v}V/{a}A" for i, (v, a) in enumerate(solar.pv_strings))
-
-        weather_color = colors.weather_color(solar.weather_temp_c)
-        weather_temp = f"{solar.weather_temp_c}C"
-        if weather_color:
-            weather_temp = f"[{weather_color}]{weather_temp}[/{weather_color}]"
-
+        rated_kw = solar.nominal_power_w / 1000.0
         lines = [
             f"[b]{_label('Generation')}[/b][{color}]{solar.line}[/{color}] "
-            f"({solar.capacity_pct}% of rated capacity)",
+            f"({solar.capacity_pct}% of {rated_kw:.1f}kW rated capacity)",
             f"[b]{_label('Today')}[/b]{solar.today_kwh} kWh    "
             f"[b]Month[/b] {solar.month_kwh} kWh    "
             f"[b]Total[/b] {solar.total_kwh:,.0f} kWh",
-            f"[b]{_label('Weather')}[/b]{solar.weather_condition}, {weather_temp}",
-            f"[b]{_label('Inverter')}[/b]{pv_text}    AC {solar.ac_voltage}V/{solar.ac_frequency}Hz",
         ]
         self.query_one("#solar_panel", Static).update("\n".join(lines))
 
@@ -297,6 +362,12 @@ def _format_timedelta(td: datetime.timedelta) -> str:
     hours, remainder = divmod(total_seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def _format_seconds(seconds: float) -> str:
+    total = int(seconds)
+    minutes, secs = divmod(total, 60)
+    return f"{minutes}m {secs}s" if minutes else f"{secs}s"
 
 
 def run() -> None:

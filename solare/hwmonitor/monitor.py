@@ -29,6 +29,7 @@ class HardwareSnapshot:
     cpu_temp_c: float | None
     cpu_power_w: float | None
     ram_used_gb: float
+    ram_total_gb: float
     ram_load_pct: float
     gpu_temp_c: float | None = None
     gpu_load_pct: float | None = None
@@ -57,6 +58,7 @@ class HardwareMonitor:
 
         mem = psutil.virtual_memory()
         ram_used_gb = round((mem.total - mem.available) / (1024**3), 2)
+        ram_total_gb = round(mem.total / (1024**3), 2)
 
         cpu_temp_c, cpu_power_w = solare_platform.get_cpu_temp_power()
 
@@ -80,6 +82,7 @@ class HardwareMonitor:
             cpu_temp_c=cpu_temp_c,
             cpu_power_w=cpu_power_w,
             ram_used_gb=ram_used_gb,
+            ram_total_gb=ram_total_gb,
             ram_load_pct=round(mem.percent, 1),
             gpu_temp_c=gpu_temp_c,
             gpu_load_pct=gpu_load_pct,

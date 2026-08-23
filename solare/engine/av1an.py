@@ -19,6 +19,7 @@ from pathlib import Path
 import psutil
 
 from solare import platform as solare_platform
+from solare.engine.chunk_progress import ChunkProgress, find_latest_log, parse_chunk_progress
 from solare.engine.config import TitleConfig
 
 
@@ -36,13 +37,26 @@ class Av1anRunner:
     """One av1an invocation - one source file encoded to one video-only output. Audio, subtitles,
     and muxing are separate passes outside this class."""
 
-    def __init__(self, config: TitleConfig, src_file: Path, video_out: Path, temp_dir: Path):
+    def __init__(
+        self,
+        config: TitleConfig,
+        src_file: Path,
+        video_out: Path,
+        temp_dir: Path,
+        chunk_method: str = "lsmash",
+    ):
         self._config = config
         # Resolved to absolute up front - av1an is launched with its cwd changed (see start()),
         # so any relative path here would otherwise resolve against the wrong directory.
         self._src_file = src_file.resolve()
         self._video_out = video_out.resolve()
         self._temp_dir = temp_dir.resolve()
+        # A resumed run must use the same chunk method its existing --temp progress was built
+        # with - av1an's own split/loadscript.vpy already hardcodes it from the original run, and
+        # a mismatched -m flag on resume is a real inconsistency risk. lsmash is the default for a
+        # fresh run (see build_args()'s comment on why); override for anything resuming from a
+        # --temp directory that used a different method.
+        self._chunk_method = chunk_method
         self._process: subprocess.Popen | None = None
         self._suspended_pids: set[int] = set()
 
@@ -59,9 +73,9 @@ class Av1anRunner:
             # Explicit chunk-method rather than av1an's own default. Verified directly: av1an's
             # ffmpeg-based fallback chunk methods (its likely default, and "hybrid"/"segment"
             # explicitly) still pass ffmpeg's removed -vsync flag and crash with "Unrecognized
-            # option 'vsync'" on current ffmpeg builds. lsmash (a VapourSynth-plugin-based method)
-            # sidesteps that entirely.
-            "-m", "lsmash",
+            # option 'vsync'" on current ffmpeg builds. Any VapourSynth-plugin-based method
+            # (lsmash, the default here; bestsource, ffms2, ...) sidesteps that entirely.
+            "-m", self._chunk_method,
             "--temp", str(self._temp_dir),
             "-k", "-y",
         ]
@@ -121,6 +135,19 @@ class Av1anRunner:
             return None
         done_frames = sum(chunk["frames"] for chunk in data.get("done", {}).values())
         return Av1anProgress(done_frames=done_frames, total_frames=total_frames)
+
+    def get_chunk_progress(self) -> ChunkProgress | None:
+        """Per-worker in-progress chunk timing, parsed from av1an's own log (see
+        engine.chunk_progress) - the log lives at <cwd>/logs/av1an.log.<date>, cwd being
+        video_out.parent (see start()'s own comment on why). Returns None before the log exists
+        yet (encode not started) or if nothing's parseable from it."""
+        logs_dir = self._video_out.parent / "logs"
+        if not logs_dir.is_dir():
+            return None
+        log_path = find_latest_log(logs_dir)
+        if log_path is None:
+            return None
+        return parse_chunk_progress(log_path)
 
     def _process_tree_pids(self) -> list[int]:
         if self._process is None:

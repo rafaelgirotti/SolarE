@@ -21,6 +21,7 @@ from pathlib import Path
 
 from solare.engine.audio import transcode_audio_track
 from solare.engine.av1an import Av1anRunner
+from solare.engine.chunk_progress import ChunkProgress
 from solare.engine.config import TitleConfig
 from solare.engine.dolby_vision import inject_rpu
 from solare.engine.integrity import check_output_integrity
@@ -48,6 +49,7 @@ class RunState:
     current_item_name: str = ""
     chunks_done: int = 0
     chunks_total: int = 0
+    chunk_progress: ChunkProgress | None = None
     paused: bool = False
     error: str | None = None
     log_lines: list[str] = field(default_factory=list)
@@ -109,6 +111,7 @@ class JobRunner:
                 self._state.current_item_name = item.src_file.name
                 self._state.chunks_done = 0
                 self._state.chunks_total = 0
+                self._state.chunk_progress = None
                 self._state.item_started_at = datetime.datetime.now()
                 self._state.item_paused_seconds = 0.0
             if item.already_done:
@@ -126,17 +129,26 @@ class JobRunner:
             self._state.phase = RunPhase.DONE
 
     def _run_item(self, item: QueueItem) -> None:
-        temp_dir = item.out_file.parent / f"{item.out_file.stem}.av1an-temp"
+        temp_dir_override = self._config.video.temp_dir
+        temp_dir = (
+            Path(temp_dir_override)
+            if temp_dir_override
+            else item.out_file.parent / f"{item.out_file.stem}.av1an-temp"
+        )
         video_tmp = item.out_file.parent / f"{item.out_file.stem}.video.tmp.mkv"
 
         with self._lock:
             self._state.phase = RunPhase.VIDEO_ENCODE
-        self._av1an = Av1anRunner(self._config, item.src_file, video_tmp, temp_dir)
+        self._av1an = Av1anRunner(
+            self._config, item.src_file, video_tmp, temp_dir, chunk_method=self._config.video.chunk_method
+        )
         self._av1an.start()
         self._log(f"video encode started: {item.src_file.name}")
 
         exit_code = self._wait_for_av1an()
         self._av1an = None
+        with self._lock:
+            self._state.chunk_progress = None
         if self._stop.is_set():
             return
         if exit_code != 0:
@@ -193,10 +205,12 @@ class JobRunner:
                 return None
             self._av1an.set_suspended(self._paused.is_set())
             progress = self._av1an.get_progress()
-            if progress is not None:
-                with self._lock:
+            chunk_progress = self._av1an.get_chunk_progress()
+            with self._lock:
+                if progress is not None:
                     self._state.chunks_done = progress.done_frames
                     self._state.chunks_total = progress.total_frames
+                self._state.chunk_progress = chunk_progress
             exit_code = self._av1an.poll()
             if exit_code is not None:
                 return exit_code

@@ -11,10 +11,16 @@ from __future__ import annotations
 
 import datetime
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
-import growattServer
+try:
+    import growattServer
+
+    _GROWATT_AVAILABLE = True
+except ImportError:
+    _GROWATT_AVAILABLE = False
 
 
 @dataclass
@@ -23,6 +29,7 @@ class GenerationSummary:
     today_kwh: float
     month_kwh: float
     total_kwh: float
+    nominal_power_w: float
 
 
 @dataclass
@@ -46,6 +53,10 @@ class GrowattCredentials:
 
 class GrowattClient:
     def __init__(self, credentials: GrowattCredentials):
+        if not _GROWATT_AVAILABLE:
+            raise RuntimeError(
+                "growattServer isn't installed - run `uv sync --extra solar` to enable solar monitoring"
+            )
         self._credentials = credentials
         # add_random_user_id works around a known growattServer/API quirk where repeated logins
         # from the same synthesized user id can get rejected.
@@ -112,7 +123,9 @@ class GrowattClient:
 
         Confirmed working (see docs/growatt-api.md) - unlike household consumption/import/battery
         data, which reads 0 without a smart meter/CT clamp attached to the inverter, generation
-        totals are populated regardless.
+        totals are populated regardless. `yearValue` is a separate field on the same response but
+        reads "0.0" on the test account (real gap or account-specific, unconfirmed either way) -
+        deliberately not exposed here since there's nothing real to report for it yet.
         """
         self._ensure_login()
         data = self._api.plant_energy_data(self._get_plant_id())
@@ -121,4 +134,15 @@ class GrowattClient:
             today_kwh=float(data["todayValue"]),
             month_kwh=float(data["monthValue"]),
             total_kwh=float(data["totalValue"]),
+            nominal_power_w=_parse_nominal_power_w(data["nominalPowerStr"]),
         )
+
+
+def _parse_nominal_power_w(nominal_power_str: str) -> float:
+    """"7.5kWp" -> 7500.0 - confirmed format from a live account; a bare "Wp" (no k prefix) is
+    handled too on the assumption a small enough system would report that way, though unverified."""
+    match = re.match(r"([\d.]+)\s*(k?)Wp", nominal_power_str)
+    if not match:
+        raise ValueError(f"Unrecognized nominalPowerStr format: {nominal_power_str!r}")
+    value, kilo = match.groups()
+    return float(value) * (1000.0 if kilo else 1.0)

@@ -25,10 +25,6 @@ RAM_LOAD_DANGER_PCT = 90.0
 DISK_FREE_WARN_GB = 50.0
 DISK_FREE_DANGER_GB = 10.0
 
-COLD = "#4da6ff"
-WEATHER_COLD_BELOW_C = 15.0
-WEATHER_HOT_ABOVE_C = 35.0
-
 
 def rising_gradient(value: float | None, warn_at: float, danger_at: float) -> str:
     """Color for a value where HIGHER is riskier (temperature, RAM load)."""
@@ -39,17 +35,6 @@ def rising_gradient(value: float | None, warn_at: float, danger_at: float) -> st
     if value >= warn_at:
         return WARN
     return SAFE
-
-
-def weather_color(temp_c: float) -> str | None:
-    """Blue when cold, warm-tinted above a heat threshold (panel efficiency drops in heat),
-    None (default text color) for ordinary mild weather - a temperature convention, not a risk
-    gradient, so it uses its own hue rather than SAFE/WARN/DANGER."""
-    if temp_c < WEATHER_COLD_BELOW_C:
-        return COLD
-    if temp_c > WEATHER_HOT_ABOVE_C:
-        return WARN
-    return None
 
 
 def falling_gradient(value: float | None, warn_below: float, danger_below: float) -> str:

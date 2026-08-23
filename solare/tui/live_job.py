@@ -1,7 +1,4 @@
-"""Adapts a real JobRunner's RunState into the JobState shape the dashboard renders - the same
-interface `mock.MockJobSource` exposes (`poll_job()`, `log_lines`, `pause`/`resume`), so `app.py`'s
-rendering code doesn't change depending on which one is behind it.
-"""
+"""Adapts a real JobRunner's RunState into the JobState shape the dashboard renders."""
 
 from __future__ import annotations
 
@@ -10,7 +7,7 @@ import shutil
 from pathlib import Path
 
 from solare.engine import JobRunner, RunPhase, TitleConfig
-from solare.tui.state import JobState
+from solare.tui.state import ActiveChunkInfo, JobState
 
 
 class LiveJobSource:
@@ -66,6 +63,19 @@ class LiveJobSource:
         disk_check_path = output_root if output_root.exists() else self._config.path.parent
         disk_usage = shutil.disk_usage(disk_check_path)
 
+        active_chunks = []
+        if state.chunk_progress is not None:
+            for chunk in state.chunk_progress.active:
+                active_chunks.append(
+                    ActiveChunkInfo(
+                        worker_id=chunk.worker_id,
+                        chunk_index=chunk.chunk_index,
+                        elapsed_seconds=chunk.elapsed_seconds(),
+                        avg_seconds=state.chunk_progress.avg_duration_seconds,
+                        stuck=state.chunk_progress.is_stuck(chunk),
+                    )
+                )
+
         return JobState(
             title=self._config.title,
             phase=state.current_item_name or state.phase.value,
@@ -81,6 +91,7 @@ class LiveJobSource:
             disk_free_gb=round(disk_usage.free / (1024**3), 1),
             output_used_gb=_sum_output_size_gb(output_root),
             started_at=state.started_at,
+            active_chunks=active_chunks,
         )
 
 

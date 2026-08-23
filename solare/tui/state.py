@@ -1,14 +1,25 @@
 """The data one dashboard render needs.
 
-Kept deliberately separate from where the data comes from - `mock.py`'s `MockJobSource` and the
-real `solare.engine` job runner (once it exists) both just need to produce a `JobState` each tick;
-`app.py`'s rendering code doesn't change either way.
+Kept deliberately separate from where the data comes from - `app.py`'s rendering code doesn't
+need to know whether a `JobState`/`SolarState` came from a live poll or (in tests) a fake one.
 """
 
 from __future__ import annotations
 
 import datetime
 from dataclasses import dataclass
+
+
+@dataclass
+class ActiveChunkInfo:
+    """One worker's currently-in-progress chunk, from av1an's own log (see
+    engine.chunk_progress) - done.json alone can't say this, only completed chunks."""
+
+    worker_id: int
+    chunk_index: str
+    elapsed_seconds: float
+    avg_seconds: float | None
+    stuck: bool
 
 
 @dataclass
@@ -27,18 +38,19 @@ class JobState:
     disk_free_gb: float
     output_used_gb: float
     started_at: datetime.datetime
+    active_chunks: list[ActiveChunkInfo]
 
 
 @dataclass
 class SolarState:
+    """Only fields the Growatt API actually provides for a meter-less tlx account (see
+    docs/growatt-api.md) - no weather, per-MPPT PV strings, or AC voltage/frequency, none of which
+    `plant_energy_data` exposes."""
+
     line: str
     ok: bool
     today_kwh: float
     month_kwh: float
     total_kwh: float
     capacity_pct: float
-    weather_temp_c: float
-    weather_condition: str
-    pv_strings: list[tuple[float, float]]  # (volts, amps) per active MPPT string
-    ac_voltage: float
-    ac_frequency: float
+    nominal_power_w: float
