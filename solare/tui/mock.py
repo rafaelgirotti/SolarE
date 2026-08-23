@@ -27,7 +27,7 @@ _FAKE_LOG_MESSAGES = [
 
 
 def mock_solar_state() -> SolarState:
-    """Real field shapes (see docs/solar-api.md), not polled live - Growatt's API isn't meant to
+    """Real field shapes (see docs/growatt-api.md), not polled live - Growatt's API isn't meant to
     be hit every second, so real wiring waits for a background poll loop separate from the
     dashboard's own refresh tick."""
     current_power_w = 2255.4

@@ -110,7 +110,7 @@ class GrowattClient:
     def get_generation_summary(self) -> GenerationSummary:
         """Today's/this month's/lifetime generation plus current power, via `plant_energy_data`.
 
-        Confirmed working (see docs/solar-api.md) - unlike household consumption/import/battery
+        Confirmed working (see docs/growatt-api.md) - unlike household consumption/import/battery
         data, which reads 0 without a smart meter/CT clamp attached to the inverter, generation
         totals are populated regardless.
         """
