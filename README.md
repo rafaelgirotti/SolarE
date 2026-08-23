@@ -24,9 +24,9 @@ real OS-level pause/resume, and live hardware monitoring.
 ## Status
 
 Early development. The project skeleton, solar polling, hardware monitoring, the interactive
-dashboard shell, and the config/job-queue engine are in place - real per-title configs load and
-build a real file queue, but nothing encodes anything yet: the dashboard's encode progress is
-still simulated since the `av1an` orchestration engine itself doesn't exist. See
+dashboard shell, the config/job-queue engine, and `av1an` orchestration (invocation, progress,
+process-tree pause/resume - verified against a real encode) are all in place, but none of it is
+wired to the dashboard yet - the dashboard's own encode progress is still simulated. See
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for design details and [Roadmap](#roadmap) below
 for what's next.
 
@@ -136,7 +136,7 @@ uv sync && uv run python -c "import solare; import solare.engine; import solare.
 - [x] Solar polling and hardware-monitoring modules
 - [x] Textual dashboard shell (mock data)
 - [x] Config schema + job queue engine
-- [ ] `av1an` orchestration with process-tree-aware pause/resume
+- [x] `av1an` orchestration with process-tree-aware pause/resume
 - [ ] Dolby Vision injection + audio/subtitle/mux pipeline
 - [ ] Wire the dashboard to the real engine
 

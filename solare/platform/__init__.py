@@ -22,3 +22,32 @@ def get_cpu_temp_power() -> tuple[float | None, float | None]:
 
         return _impl()
     return None, None
+
+
+def suspend_process(pid: int) -> bool:
+    """Suspend a process at the kernel scheduler level. Returns False (not an exception) if
+    unsupported on this platform or the call itself failed - callers should degrade gracefully,
+    same as get_cpu_temp_power."""
+    system = _platform.system()
+    if system == "Windows":
+        from solare.platform.windows.process import suspend_process as _impl
+
+        return _impl(pid)
+    if system == "Linux":
+        from solare.platform.linux.process import suspend_process as _impl
+
+        return _impl(pid)
+    return False
+
+
+def resume_process(pid: int) -> bool:
+    system = _platform.system()
+    if system == "Windows":
+        from solare.platform.windows.process import resume_process as _impl
+
+        return _impl(pid)
+    if system == "Linux":
+        from solare.platform.linux.process import resume_process as _impl
+
+        return _impl(pid)
+    return False

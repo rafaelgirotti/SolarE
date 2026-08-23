@@ -17,6 +17,7 @@ class VideoSettings:
     codec: str
     preset: str
     crf: str
+    pix_fmt: str
     encoder_params: str
 
 
@@ -67,6 +68,7 @@ def load_config(path: str | Path) -> TitleConfig:
         codec=video_data["codec"],
         preset=video_data["preset"],
         crf=video_data["crf"],
+        pix_fmt=video_data.get("pixFmt", ""),
         encoder_params=video_data.get("encoderParams", ""),
     )
 
