@@ -21,16 +21,40 @@ class VideoSettings:
 
 
 @dataclass
+class SourceFolder:
+    src: str
+    out: str  # "" flattens straight into output.root instead of mirroring a subfolder
+
+
+@dataclass
+class NamingTransform:
+    pattern: str
+    replacement: str
+
+
+@dataclass
 class TitleConfig:
     path: Path
     title: str
     source_root: str
+    source_folders: list[SourceFolder]
+    file_match_regex: str | None
     output_root: str
+    naming_transforms: list[NamingTransform]
+    naming_append_suffix: str | None
     video: VideoSettings
 
     @property
     def settings_summary(self) -> str:
         return f"{self.video.codec} {self.video.preset} preset, CRF{self.video.crf}"
+
+
+def _parse_source_folder(entry: str | dict) -> SourceFolder:
+    """A folder entry is either a plain string (mirrored as-is into output too) or an
+    {src, out} object where "out" overrides the output-side subfolder name - "" flattens."""
+    if isinstance(entry, str):
+        return SourceFolder(src=entry, out=entry)
+    return SourceFolder(src=entry["src"], out=entry.get("out", entry["src"]))
 
 
 def load_config(path: str | Path) -> TitleConfig:
@@ -45,10 +69,22 @@ def load_config(path: str | Path) -> TitleConfig:
         crf=video_data["crf"],
         encoder_params=video_data.get("encoderParams", ""),
     )
+
+    source = data["source"]
+    naming = data.get("naming", {})
+    transforms = [
+        NamingTransform(pattern=t["pattern"], replacement=t["replacement"])
+        for t in naming.get("transforms", [])
+    ]
+
     return TitleConfig(
         path=path,
         title=data["title"],
-        source_root=data["source"]["root"],
+        source_root=source["root"],
+        source_folders=[_parse_source_folder(e) for e in source["folders"]],
+        file_match_regex=source.get("fileMatchRegex"),
         output_root=data["output"]["root"],
+        naming_transforms=transforms,
+        naming_append_suffix=naming.get("appendSuffix"),
         video=video,
     )
