@@ -18,6 +18,14 @@ import growattServer
 
 
 @dataclass
+class GenerationSummary:
+    current_power_w: float
+    today_kwh: float
+    month_kwh: float
+    total_kwh: float
+
+
+@dataclass
 class GrowattCredentials:
     server_url: str
     username: str
@@ -44,6 +52,7 @@ class GrowattClient:
         self._api = growattServer.GrowattApi(add_random_user_id=True)
         self._api.server_url = credentials.server_url
         self._logged_in = False
+        self._plant_id: str | None = None
 
     def _ensure_login(self) -> None:
         if self._logged_in:
@@ -52,6 +61,17 @@ class GrowattClient:
         if not response.get("success"):
             raise RuntimeError(f"Growatt login failed: {response.get('msg')}")
         self._logged_in = True
+
+    def _get_plant_id(self) -> str:
+        """Assumes a single-plant account, matching this project's `credentials.json` schema
+        (one `device_sn`, no `plant_id` field) - not built for multi-plant accounts."""
+        if self._plant_id is None:
+            self._ensure_login()
+            plants = self._api.plant_list_two()
+            if not plants:
+                raise RuntimeError("Growatt account has no plants")
+            self._plant_id = str(plants[0]["id"])
+        return self._plant_id
 
     def get_power_series(
         self, date: datetime.datetime | None = None
@@ -86,3 +106,19 @@ class GrowattClient:
     def is_producing(self, threshold_w: float) -> bool:
         power_w, _ = self.get_latest_power_w()
         return power_w >= threshold_w
+
+    def get_generation_summary(self) -> GenerationSummary:
+        """Today's/this month's/lifetime generation plus current power, via `plant_energy_data`.
+
+        Confirmed working (see docs/solar-api.md) - unlike household consumption/import/battery
+        data, which reads 0 without a smart meter/CT clamp attached to the inverter, generation
+        totals are populated regardless.
+        """
+        self._ensure_login()
+        data = self._api.plant_energy_data(self._get_plant_id())
+        return GenerationSummary(
+            current_power_w=float(data["powerValue"]),
+            today_kwh=float(data["todayValue"]),
+            month_kwh=float(data["monthValue"]),
+            total_kwh=float(data["totalValue"]),
+        )
