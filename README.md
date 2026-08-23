@@ -1,8 +1,7 @@
 # SolarE
 
-A video re-encoding orchestrator built for people who care about grain-preserving archival
-quality, run heavy encodes on solar power, and don't want to lose days of progress to a power
-outage.
+A video re-encoding orchestrator with solar-aware scheduling, crash-resumable chunked encoding,
+real OS-level pause/resume, and live hardware monitoring.
 
 ## What makes this different
 
@@ -16,8 +15,8 @@ outage.
   regardless of how long the pause lasts.
 - **Actually monitors your hardware.** Live CPU/GPU/RAM stats and temperatures alongside encode
   progress, not a bare progress bar.
-- **Built for grain-critical, HDR/Dolby-Vision content.** Tuned x265/SVT-AV1 recipes for
-  film-grain-heavy sources, with real Dolby Vision RPU passthrough support.
+- **HDR/Dolby-Vision aware.** Real Dolby Vision RPU passthrough, with x265/SVT-AV1 encoder
+  parameters fully exposed and configurable per title rather than hardcoded.
 - **Cross-platform.** Windows today, Linux support landing alongside it - platform-specific code
   (hardware sensors, process suspend/resume) is isolated behind a common interface rather than
   scattered through the codebase.
