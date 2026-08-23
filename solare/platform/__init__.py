@@ -51,3 +51,14 @@ def resume_process(pid: int) -> bool:
 
         return _impl(pid)
     return False
+
+
+def vapoursynth_dll_dir():
+    """Return the directory containing the registered VapourSynth install's vsscript.dll, or
+    None if unregistered or not applicable on this platform (Linux's dynamic linker finds
+    VapourSynth through the normal system search path - no registry/PATH workaround needed)."""
+    if _platform.system() == "Windows":
+        from solare.platform.windows.vapoursynth import vapoursynth_dll_dir as _impl
+
+        return _impl()
+    return None
