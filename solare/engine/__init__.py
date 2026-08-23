@@ -7,6 +7,7 @@ from solare.engine.config import (
     load_config,
 )
 from solare.engine.queue import QueueItem, build_queue, clean_title, output_name
+from solare.engine.toolpath import prepend_local_tools_to_path
 
 __all__ = [
     "Av1anProgress",
@@ -20,4 +21,5 @@ __all__ = [
     "build_queue",
     "clean_title",
     "output_name",
+    "prepend_local_tools_to_path",
 ]

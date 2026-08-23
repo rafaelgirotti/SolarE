@@ -22,6 +22,13 @@ config/*.json
 # dropped in here can never accidentally end up staged.
 history/
 
+# Local encoder tool binaries (av1an's dependencies: ffmpeg, x265, SVT-AV1, MKVToolNix,
+# VapourSynth, dovi_tool) - never committed. Large, platform-specific, and often GPL-licensed;
+# redistributing them through this repo isn't appropriate. See README's Requirements section for
+# where to get each one - point PATH at your own install, or drop them in tools/ (this folder) and
+# solare picks them up automatically.
+tools/
+
 # OS cruft
 .DS_Store
 Thumbs.db

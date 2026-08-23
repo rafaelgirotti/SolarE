@@ -35,10 +35,24 @@ for what's next.
 - Python 3.12+
 - [`uv`](https://github.com/astral-sh/uv) for dependency management - it also handles installing
   the right Python version for you, so a separate Python install isn't strictly required.
-- External tools on your `PATH` (needed once the encoding engine is wired up):
-  [`av1an`](https://github.com/rust-av/Av1an), a standalone `x265` and/or SVT-AV1 CLI build,
-  `ffmpeg`/`ffprobe`, `mkvmerge` (from [MKVToolNix](https://mkvtoolnix.download/)), and
-  [`dovi_tool`](https://github.com/quietvoid/dovi_tool) if you need Dolby Vision passthrough.
+- External encoder tools, resolvable on `PATH`:
+  - [`av1an`](https://github.com/rust-av/Av1an) - `cargo install av1an`, or a prebuilt binary from
+    its releases if you don't have a Rust toolchain.
+  - `ffmpeg`/`ffprobe` - [official builds](https://ffmpeg.org/download.html).
+  - A standalone `x265` CLI build - [MulticoreWare's builds](https://www.videolan.org/developers/x265.html)
+    or build from source.
+  - `SvtAv1EncApp` (SVT-AV1), if you want AV1 instead of HEVC - [releases](https://gitlab.com/AOMediaCodec/SVT-AV1/-/releases).
+  - `mkvmerge` (from [MKVToolNix](https://mkvtoolnix.download/)).
+  - [`dovi_tool`](https://github.com/quietvoid/dovi_tool), only if you need Dolby Vision passthrough.
+  - [VapourSynth](https://www.vapoursynth.com/) (`av1an`'s scene-detection dependency) - **install
+    it via the official Windows installer**, don't try to drop a portable copy in `tools/`. Verified
+    directly: a byte-for-byte copy of a working install, just relocated, fails to initialize - its
+    loader depends on being discovered through a real install, not just being on `PATH`.
+
+  **Convenience**: drop any of the above (except VapourSynth) into `tools/<name>/` next to this
+  project (e.g. `tools/ffmpeg/ffmpeg.exe`) and `solare` prepends them to `PATH` automatically - no
+  global install needed. `tools/` is gitignored; nothing in it is ever committed (these are large,
+  platform-specific, often GPL-licensed binaries that don't belong in a git history).
 - Optional, only if you want solar-aware scheduling: a [Growatt](https://www.growatt.com/)
   inverter reachable via their cloud API (`--extra solar`).
 - Optional, only for NVIDIA GPU stats in the hardware monitor: an NVIDIA GPU with drivers

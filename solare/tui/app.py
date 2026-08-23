@@ -18,7 +18,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Footer, RichLog, Static
 
-from solare.engine import TitleConfig, load_config
+from solare.engine import TitleConfig, load_config, prepend_local_tools_to_path
 from solare.hwmonitor import HardwareMonitor, HardwareSnapshot
 from solare.tui import colors, links
 from solare.tui.mock import MockJobSource, mock_solar_state
@@ -294,6 +294,7 @@ def _format_timedelta(td: datetime.timedelta) -> str:
 
 
 def run() -> None:
+    prepend_local_tools_to_path()
     parser = argparse.ArgumentParser(prog="solare", description="SolarE dashboard")
     parser.add_argument("--config", type=str, default=None, help="Title config .json to load on startup")
     parser.add_argument("--start", action="store_true", help="Start immediately (requires --config)")
