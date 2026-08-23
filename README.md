@@ -23,10 +23,10 @@ real OS-level pause/resume, and live hardware monitoring.
 
 ## Status
 
-Early development. The project skeleton, dependency setup, and architecture are in place;
-the solar/hardware-monitoring modules, the Textual dashboard, and the `av1an` orchestration
-engine itself are still being built. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for
-design details and [Roadmap](#roadmap) below for what's next.
+Early development. The project skeleton, solar polling, and hardware monitoring are in place;
+the Textual dashboard and the `av1an` orchestration engine itself are still being built. See
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for design details and [Roadmap](#roadmap) below
+for what's next.
 
 ## Requirements
 
@@ -38,7 +38,9 @@ design details and [Roadmap](#roadmap) below for what's next.
   `ffmpeg`/`ffprobe`, `mkvmerge` (from [MKVToolNix](https://mkvtoolnix.download/)), and
   [`dovi_tool`](https://github.com/quietvoid/dovi_tool) if you need Dolby Vision passthrough.
 - Optional, only if you want solar-aware scheduling: a [Growatt](https://www.growatt.com/)
-  inverter reachable via their cloud API (`growattServer` extra).
+  inverter reachable via their cloud API (`--extra solar`).
+- Optional, only for NVIDIA GPU stats in the hardware monitor: an NVIDIA GPU with drivers
+  installed (`--extra gpu`). CPU/RAM monitoring works without it.
 
 ## Installation
 
@@ -77,6 +79,17 @@ paths, video codec and encoder params, audio track handling, subtitles). Real pe
 are gitignored - only `config.example.json` is tracked in the repo, so your own paths and
 settings never end up in version control.
 
+Solar-aware scheduling is optional and needs its own credentials file:
+
+```bash
+cp credentials.example.json credentials.json
+# edit credentials.json with your Growatt account details
+```
+
+`credentials.json` is gitignored. See [`solare/solar/client.py`](solare/solar/client.py) for what
+each field is used for, and confirm your inverter is `tlx`-family (via growattServer's
+`device_list`) before relying on it - other Growatt device families expose different data.
+
 ## Development
 
 ```bash
@@ -99,7 +112,7 @@ uv sync && uv run python -c "import solare; import solare.engine; import solare.
 ## Roadmap
 
 - [x] Project skeleton, `uv`/dependency setup, architecture docs
-- [ ] Solar polling and hardware-monitoring modules
+- [x] Solar polling and hardware-monitoring modules
 - [ ] Textual dashboard shell (mock data)
 - [ ] Config schema + job queue engine
 - [ ] `av1an` orchestration with process-tree-aware pause/resume

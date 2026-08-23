@@ -12,7 +12,7 @@ dependencies = [
 
 [project.optional-dependencies]
 solar = ["growattServer"]
-gpu = ["pynvml"]
+gpu = ["nvidia-ml-py"]
 
 [build-system]
 requires = ["hatchling"]
