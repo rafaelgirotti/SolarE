@@ -6,10 +6,6 @@ Screen {
     color: #33cc33;
 }
 
-#dashboard {
-    padding: 0 1;
-}
-
 #job_panel {
     border: heavy #33cc33;
     border-title-color: #55ff55;
@@ -19,11 +15,27 @@ Screen {
     padding: 0 1;
 }
 
+#chunks_bar {
+    height: 1;
+    width: 50%;
+    margin-top: 0;
+}
+
 #hw_panel {
     border: heavy #ffb000;
     border-title-color: #ffb000;
     border-title-style: bold;
     color: #ffb000;
+    height: auto;
+    padding: 0 1;
+    margin-top: 1;
+}
+
+#solar_panel {
+    border: heavy #33cc33;
+    border-title-color: #55ff55;
+    border-title-style: bold;
+    color: #33cc33;
     height: auto;
     padding: 0 1;
     margin-top: 1;

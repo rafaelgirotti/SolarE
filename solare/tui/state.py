@@ -19,21 +19,36 @@ class JobState:
     phase: str
     item_index: int
     item_count: int
-    job_name: str
     chunks_done: int
     chunks_total: int
     settings_summary: str
-    eta_item: str
-    eta_batch: str | None
+    config_path: str
+    eta_text: str
+    batch_summary: str | None
+    output_path: str
     disk_free_gb: float
-    disk_drive: str
-    solar_line: str
-    solar_ok: bool
+    output_used_gb: float
     started_at: datetime.datetime
+
+
+@dataclass
+class SolarState:
+    line: str
+    ok: bool
+    today_kwh: float
+    month_kwh: float
+    total_kwh: float
+    capacity_pct: float
+    weather_temp_c: float
+    weather_condition: str
+    pv_strings: list[tuple[float, float]]  # (volts, amps) per active MPPT string
+    ac_voltage: float
+    ac_frequency: float
 
 
 @dataclass
 class DashboardState:
     job: JobState
     hw: HardwareSnapshot
+    solar: SolarState
     log_lines: list[str] = field(default_factory=list)
