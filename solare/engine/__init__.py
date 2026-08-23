@@ -13,6 +13,7 @@ from solare.engine.dolby_vision import inject_rpu
 from solare.engine.integrity import IntegrityResult, check_output_integrity
 from solare.engine.mux import SubtitleSource, mux_episode, resolve_subtitle_sources
 from solare.engine.queue import QueueItem, build_queue, clean_title, output_name
+from solare.engine.runner import JobRunner, RunPhase, RunState
 from solare.engine.toolpath import prepend_local_tools_to_path
 
 __all__ = [
@@ -20,7 +21,10 @@ __all__ = [
     "Av1anProgress",
     "Av1anRunner",
     "IntegrityResult",
+    "JobRunner",
     "NamingTransform",
+    "RunPhase",
+    "RunState",
     "SourceFolder",
     "Subtitle",
     "SubtitleSource",

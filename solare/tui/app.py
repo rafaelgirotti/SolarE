@@ -1,10 +1,10 @@
-"""SolarE dashboard - Phase 3: real layout/styling/interaction, mock encode-job progress.
+"""SolarE dashboard - drives a real encode job end to end.
 
 Hardware stats are real (`solare.hwmonitor`, polled independently of any loaded job - works even
-before a config is chosen). Encode-job progress (chunks, ETA, log lines) is simulated via
-`mock.MockJobSource` once a real per-title config is loaded - there's no `solare.engine`
-orchestration yet, see docs/ARCHITECTURE.md and the README roadmap. Title/settings/paths shown
-once a config is loaded are real, not mocked.
+before a config is chosen). Once a config is loaded and started, encode-job progress comes from a
+real `solare.engine.JobRunner` (via `LiveJobSource`) - a real `av1an` process, real Dolby
+Vision/audio/mux passes, running in a background thread so the dashboard's own refresh tick never
+blocks on it. Solar generation is still simulated (see `mock.py` for why).
 """
 
 from __future__ import annotations
@@ -18,18 +18,17 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Footer, RichLog, Static
 
-from solare.engine import TitleConfig, load_config, prepend_local_tools_to_path
+from solare.engine import JobRunner, TitleConfig, load_config, prepend_local_tools_to_path
 from solare.hwmonitor import HardwareMonitor, HardwareSnapshot
 from solare.tui import colors, links
-from solare.tui.mock import MockJobSource, mock_solar_state
+from solare.tui.live_job import LiveJobSource
+from solare.tui.mock import mock_solar_state
 from solare.tui.picker import ConfigPickerScreen
 from solare.tui.progress_bar import TextProgressBar
 from solare.tui.state import JobState, SolarState
 
 _REFRESH_INTERVAL_SECONDS = 1.0
 _LABEL_WIDTH = 11  # fits "Generation" (10 chars), the longest label used, plus a 1-space gap
-_DEMO_ITEM_INDEX = 3
-_DEMO_ITEM_COUNT = 12
 
 
 def _label(text: str) -> str:
@@ -56,7 +55,7 @@ class SolarEApp(App):
     def __init__(self, config_path: str | Path | None = None, auto_start: bool = False) -> None:
         super().__init__()
         self._hw_monitor = HardwareMonitor()
-        self._job_source: MockJobSource | None = None
+        self._job_source: LiveJobSource | None = None
         self._config: TitleConfig | None = None
         self._phase = AppPhase.IDLE
         self._pending_config_path = config_path
@@ -125,15 +124,21 @@ class SolarEApp(App):
             self.notify(f"Couldn't load {path}: {e}", severity="error")
             return
         self._config = config
-        self._job_source = MockJobSource(
-            config, item_index=_DEMO_ITEM_INDEX, item_count=_DEMO_ITEM_COUNT
-        )
+        self._job_source = None
         self._rendered_log_count = 0
         self._phase = AppPhase.LOADED
 
     def action_start(self) -> None:
-        if self._phase != AppPhase.LOADED:
+        if self._phase != AppPhase.LOADED or self._config is None:
             return
+        try:
+            runner = JobRunner(self._config)
+        except (OSError, FileNotFoundError, RuntimeError) as e:
+            self.notify(f"Couldn't start: {e}", severity="error")
+            return
+        runner.start()
+        self._job_source = LiveJobSource(self._config, runner)
+        self._rendered_log_count = 0
         self._phase = AppPhase.RUNNING
         self._update_controls()
 
@@ -151,7 +156,8 @@ class SolarEApp(App):
     def action_stop(self) -> None:
         if self._phase not in (AppPhase.RUNNING, AppPhase.PAUSED):
             return
-        self._job_source.reset()
+        self._job_source.stop()
+        self._job_source = None
         self._rendered_log_count = 0
         self._phase = AppPhase.LOADED
         self._update_controls()

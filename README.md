@@ -23,13 +23,13 @@ real OS-level pause/resume, and live hardware monitoring.
 
 ## Status
 
-Early development. The project skeleton, solar polling, hardware monitoring, the interactive
-dashboard shell, the config/job-queue engine, `av1an` orchestration, and the full Dolby Vision/
-audio/subtitle/mux pipeline are all in place - a real title config can be turned into a real,
-verified-correct output file end to end. None of it is wired to the dashboard yet, though - the
-dashboard's own encode progress is still simulated. See
+Functional end to end: load a real title config in the dashboard, press Start, and it drives a
+real `av1an` encode plus the full Dolby Vision/audio/subtitle/mux pipeline in the background,
+rendering real progress, a real ETA, and real pause/resume against the live process tree - not a
+simulation. Solar generation is the one panel still simulated (see `solare/tui/mock.py` for why).
+Still ahead: broader testing against real-world titles, and polish. See
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for design details and [Roadmap](#roadmap) below
-for what's next.
+for what's tracked.
 
 ## Requirements
 
@@ -116,9 +116,10 @@ each field is used for, and confirm your inverter is `tlx`-family (via growattSe
 uv run solare
 ```
 
-Launches the Textual dashboard. Real CPU/GPU/RAM stats are read live from your machine; encode-job
-progress (chunks, ETA, log lines) is simulated once a config is loaded - there's no real encoding
-engine wired in yet, see [Roadmap](#roadmap).
+Launches the Textual dashboard. CPU/GPU/RAM stats are read live from your machine; once a config
+is loaded and started, encode-job progress (chunks, ETA, log lines) comes from a real `av1an`
+process - this actually encodes your source file. Make sure you're pointed at the right config
+before pressing Start.
 
 With no arguments, the dashboard starts idle - press `C` or click **Choose config** to pick a
 `.json` file, then **Start**. `Ctrl+C` quits; `P` pauses/resumes, `T` stops.
@@ -131,15 +132,23 @@ uv run solare --config config/my-title.json --start
 
 ## Development
 
+Project layout - `solare/` appears twice on purpose: the outer one is this repo (whatever you
+named the folder you cloned into), the inner one is the actual Python package (`import solare`),
+standard Python convention for naming the package directory after the project.
+
 ```bash
-solare/                  # application package
-├── engine/               # queue building, config parsing, job orchestration
-├── hwmonitor/             # CPU/GPU/RAM stats and temperatures
-├── platform/              # OS-specific code behind a common interface
-│   ├── windows/
-│   └── linux/
-├── solar/                 # inverter polling / solar-aware scheduling
-└── tui/                   # the Textual dashboard
+SolarE/                    # this repo (the folder name itself doesn't matter)
+├── pyproject.toml
+├── config/                 # config.example.json (real per-title configs are gitignored)
+├── docs/                   # architecture, Growatt API reference
+└── solare/                 # the Python package - everything below is `import solare....`
+    ├── engine/               # queue building, config parsing, job orchestration
+    ├── hwmonitor/             # CPU/GPU/RAM stats and temperatures
+    ├── platform/              # OS-specific code behind a common interface
+    │   ├── windows/
+    │   └── linux/
+    ├── solar/                 # inverter polling / solar-aware scheduling
+    └── tui/                   # the Textual dashboard
 ```
 
 Run the full dependency + import sanity check with:
@@ -156,7 +165,7 @@ uv sync && uv run python -c "import solare; import solare.engine; import solare.
 - [x] Config schema + job queue engine
 - [x] `av1an` orchestration with process-tree-aware pause/resume
 - [x] Dolby Vision injection + audio/subtitle/mux pipeline
-- [ ] Wire the dashboard to the real engine
+- [x] Wire the dashboard to the real engine
 
 ## License
 
