@@ -65,6 +65,10 @@ class Av1anRunner:
         ]
         if video.pix_fmt:
             args += ["--pix-format", video.pix_fmt]
+        if video.crop:
+            args += ["-f", f"-vf crop={video.crop}"]
+        if self._temp_dir.is_dir():
+            args += ["-r"]  # resume from an existing --temp dir rather than starting over
         return args
 
     def start(self) -> None:
