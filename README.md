@@ -44,10 +44,13 @@ for what's next.
   - `SvtAv1EncApp` (SVT-AV1), if you want AV1 instead of HEVC - [releases](https://gitlab.com/AOMediaCodec/SVT-AV1/-/releases).
   - `mkvmerge` (from [MKVToolNix](https://mkvtoolnix.download/)).
   - [`dovi_tool`](https://github.com/quietvoid/dovi_tool), only if you need Dolby Vision passthrough.
-  - [VapourSynth](https://www.vapoursynth.com/) (`av1an`'s scene-detection dependency) - **install
-    it via the official Windows installer**, don't try to drop a portable copy in `tools/`. Verified
-    directly: a byte-for-byte copy of a working install, just relocated, fails to initialize - its
-    loader depends on being discovered through a real install, not just being on `PATH`.
+  - [VapourSynth](https://www.vapoursynth.com/) plus its chunking plugins (L-SMASH/FFMS2/BestSource)
+    - **install via the official installer**, don't try to drop a portable copy in `tools/`.
+    Verified directly: a byte-for-byte copy of a working install, just relocated, fails to
+    initialize - its loader depends on being discovered through a real install, not just being on
+    `PATH`. Follow [av1an's own installation instructions](https://github.com/rust-av/Av1an#installation)
+    for the plugin setup (on Windows: `python3 vsrepo.py install lsmas ffms2 bs vszip julek` from
+    VapourSynth's install directory) - this project doesn't duplicate that guide.
 
   **Convenience**: drop any of the above (except VapourSynth) into `tools/<name>/` next to this
   project (e.g. `tools/ffmpeg/ffmpeg.exe`) and `solare` prepends them to `PATH` automatically - no

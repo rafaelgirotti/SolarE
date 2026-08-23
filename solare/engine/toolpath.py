@@ -9,8 +9,10 @@ used unchanged.
 VapourSynth is deliberately NOT in this list. Verified directly: a byte-for-byte copy of a working
 VapourSynth install, relocated to a plain tools/vapoursynth/ folder, fails ("Failed to get
 VSScript API") even though every DLL is present and identical - its loader depends on being
-discovered through a real install (the official Windows installer self-registers), not just being
-on PATH. Install it properly instead of trying to bundle a portable copy - see the README.
+discovered through a real install (confirmed working via winget's VapourSynth.VapourSynth package,
+which writes proper HKCU\SOFTWARE\VapourSynth registry entries), not just being on PATH. Install it
+- and its chunking plugins (L-SMASH/FFMS2/BestSource) - per av1an's own installation instructions
+(https://github.com/rust-av/Av1an#installation), not by copying files here.
 """
 
 from __future__ import annotations
