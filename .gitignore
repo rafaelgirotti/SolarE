@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.venv/
+.python-version
+
+# Secrets - never commit (Growatt API login)
+credentials.json
+.env
+
+# Per-title recipe configs - only the example template is ever committed.
+# Real configs carry the user's actual source/output file paths.
+config/*.json
+!config/config.example.json
+
+# Per-title investigation history - genuinely useful locally (full context, file paths,
+# source-release specifics for encoding decisions), but never meant to be public even after
+# this project itself goes public. Ignored wholesale, not just individual files, so a new file
+# dropped in here can never accidentally end up staged.
+history/
+
+# OS cruft
+.DS_Store
+Thumbs.db
+desktop.ini

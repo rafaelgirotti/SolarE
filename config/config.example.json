@@ -1,0 +1,46 @@
+{
+  "title": "Example Title (Year)",
+  "source": {
+    "root": "/path/to/your/source/files",
+    "folders": [{ "src": "", "out": "" }],
+    "fileMatchRegex": "\\.mkv$"
+  },
+  "output": {
+    "root": "/path/to/your/output/directory"
+  },
+  "naming": {
+    "transforms": [
+      { "pattern": "^.*$", "replacement": "Example Title (Year)" }
+    ],
+    "appendSuffix": " (2160p HEVC Opus)"
+  },
+  "video": {
+    "codec": "x265",
+    "preset": "slow",
+    "crf": "22",
+    "pixFmt": "yuv420p10le",
+    "crop": null,
+    "encoderParams": "--no-sao --no-cutree --no-strong-intra-smoothing --deblock -1:-1 --psy-rd 2.0 --psy-rdoq 2.0 --aq-mode 3 --aq-strength 0.6",
+    "doviRpu": null
+  },
+  "audio": {
+    "sourceLanguage": "jpn",
+    "tracks": [
+      {
+        "kind": "native",
+        "bitrate": "256k",
+        "title": "Japanese",
+        "language": "jpn",
+        "default": true,
+        "mappingFamily": "1"
+      }
+    ]
+  },
+  "subtitles": [
+    {
+      "language": "eng",
+      "title": "English",
+      "default": true
+    }
+  ]
+}
