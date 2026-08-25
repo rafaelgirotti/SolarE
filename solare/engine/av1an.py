@@ -2,7 +2,11 @@
 
 Assumes `av1an` and its encoder dependencies (x265/SVT-AV1/etc, ffmpeg) are already resolvable on
 PATH - see the README's Requirements section. No tool directory is hardcoded into the source -
-point PATH at your own tools instead.
+point PATH at your own tools instead (or use `solare.engine.prepend_local_tools_to_path()`).
+
+VapourSynth is the one dependency that can't be bundled in `tools/` - it needs a real, registered
+install plus its own chunking plugins (`lsmas`/`ffms2`/`bs`/`vszip`/`julek` via `vsrepo`), verified
+directly against a real encode end to end. See the README's Requirements section.
 """
 
 from __future__ import annotations
@@ -50,6 +54,12 @@ class Av1anRunner:
             "-e", video.codec,
             "-v", video_params,
             "-a", "-an",
+            # Explicit chunk-method rather than av1an's own default. Verified directly: av1an's
+            # ffmpeg-based fallback chunk methods (its likely default, and "hybrid"/"segment"
+            # explicitly) still pass ffmpeg's removed -vsync flag and crash with "Unrecognized
+            # option 'vsync'" on current ffmpeg builds. lsmash (a VapourSynth-plugin-based method)
+            # sidesteps that entirely.
+            "-m", "lsmash",
             "--temp", str(self._temp_dir),
             "-k", "-y",
         ]
