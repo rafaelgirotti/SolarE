@@ -64,7 +64,10 @@ class LiveJobSource:
         batch_summary = None
         if state.item_count > 1:
             completed = state.item_index - 1
-            batch_summary = f"{state.item_index}/{state.item_count} items ({completed} completed)"
+            batch_summary = (
+                f"{state.item_index}/{state.item_count} items ({completed} completed) - "
+                f"current: {state.current_item_name}"
+            )
 
         output_root = Path(self._config.output_root)
         disk_check_path = output_root if output_root.exists() else self._config.path.parent
@@ -96,7 +99,7 @@ class LiveJobSource:
 
         return JobState(
             title=self._config.title,
-            phase=state.current_item_name or state.phase.value,
+            phase=state.phase.value,
             item_index=state.item_index,
             item_count=state.item_count,
             frames_done=state.frames_done,

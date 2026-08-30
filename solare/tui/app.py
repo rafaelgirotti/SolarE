@@ -21,6 +21,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Footer, RichLog, Static
 
+from solare import platform as solare_platform
 from solare.engine import JobRunner, TitleConfig, load_config, prepend_local_tools_to_path
 from solare.hwmonitor import HardwareMonitor, HardwareSnapshot
 from solare.solar import GrowattCredentials, SolarPoller
@@ -259,8 +260,12 @@ class SolarEApp(App):
         ]
         self.query_one("#job_footer", Static).update("\n".join(footer_lines))
 
+        # Deliberately just title + phase, no item-count/filename - those already show in the
+        # footer (item count) and batch_summary (current filename, batches only), so the always-
+        # visible title bar stays short and equally clean for a single-file title or a 24-item
+        # batch, instead of growing with a raw scene-release filename or a redundant "(1/1)".
         panel = self.query_one("#job_panel", Vertical)
-        panel.border_title = f" {job.title} - {job.phase} ({job.item_index}/{job.item_count}) "
+        panel.border_title = f" {job.title} - {job.phase} "
 
     def _format_active_chunks(self, active_chunks: list[ActiveChunkInfo]) -> str:
         """Per-worker in-progress chunk timing - flags a chunk running far past its recent peers'
@@ -388,6 +393,10 @@ def _format_seconds(seconds: float) -> str:
 
 def run() -> None:
     prepend_local_tools_to_path()
+    # Set once, early, before Textual takes over the screen - the title persists in the terminal's
+    # own window/tab state regardless of what Textual does with the content area afterward, so
+    # this doesn't need to run again on every refresh tick.
+    solare_platform.set_console_title("SolarE")
     parser = argparse.ArgumentParser(prog="solare", description="SolarE dashboard")
     parser.add_argument("--config", type=str, default=None, help="Title config .json to load on startup")
     parser.add_argument("--start", action="store_true", help="Start immediately (requires --config)")

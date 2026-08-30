@@ -68,6 +68,21 @@ def subprocess_creation_flags() -> int:
     return 0
 
 
+def set_console_title(title: str) -> None:
+    """Sets the OS-level terminal/console window title - not the same thing as a Textual App's
+    own `TITLE` attribute, which only feeds an in-app Header widget and never touches the actual
+    window title. A no-op on an unrecognized platform."""
+    system = _platform.system()
+    if system == "Windows":
+        from solare.platform.windows.process import set_console_title as _impl
+
+        _impl(title)
+    elif system == "Linux":
+        from solare.platform.linux.process import set_console_title as _impl
+
+        _impl(title)
+
+
 def vapoursynth_dll_dir():
     """Return the directory containing the registered VapourSynth install's vsscript.dll, or
     None if unregistered or not applicable on this platform (Linux's dynamic linker finds
