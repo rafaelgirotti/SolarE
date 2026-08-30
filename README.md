@@ -1,13 +1,13 @@
 # SolarE
 
-A video re-encoding orchestrator with solar generation monitoring, crash-resumable chunked
-encoding, OS-level pause/resume, and live hardware monitoring.
+A video re-encoding orchestrator with solar-aware scheduling, crash-resumable chunked encoding,
+OS-level pause/resume, and live hardware monitoring.
 
 ## What makes this different
 
-- **Solar monitoring built in.** Live generation, today/month/lifetime totals, and rated capacity
-  from a Growatt inverter, polled independently of any running job. (Gating the encode itself to
-  production hours is on the roadmap, not wired up yet - see Status.)
+- **Solar-aware scheduling.** Gates the encode to actual production hours, polling a Growatt
+  inverter directly - a title can auto-pause below a configured wattage and resume once
+  generation picks back up, composing with manual pause rather than overriding it.
 - **Crash-resumable, chunked encoding.** Video encoding is split into independently-encoded
   chunks (via [`av1an`](https://github.com/rust-av/Av1an)) - a hard kill, a power outage, or a
   deliberate pause loses at most one in-progress chunk, not the whole job.
@@ -29,9 +29,8 @@ encoding, OS-level pause/resume, and live hardware monitoring.
 Load a title config in the dashboard, press Start, and it drives an `av1an` encode plus the full
 Dolby Vision/audio/subtitle/mux pipeline in the background, with progress, ETA, and pause/resume
 tracking the live process tree. Solar monitoring polls a Growatt inverter independently of any
-running job. Gating the encode to production hours isn't wired up yet - the pieces it needs
-(`GrowattClient.is_producing()`, `JobRunner.pause()`/`resume()`) both exist, just not connected to
-each other. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for design details.
+running job, and a title config's `solarGate` connects that reading to the same pause path a
+manual toggle uses. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for design details.
 
 ## Requirements
 
