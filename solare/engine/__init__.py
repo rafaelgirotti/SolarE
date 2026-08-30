@@ -18,6 +18,7 @@ from solare.engine.integrity import IntegrityResult, check_output_integrity
 from solare.engine.mux import SubtitleSource, mux_episode, resolve_subtitle_sources
 from solare.engine.preprocess import generate_vpy, needs_preprocessing
 from solare.engine.queue import QueueItem, build_queue, clean_title, output_name
+from solare.engine.relocate import relocate_job_dir
 from solare.engine.runner import JobRunner, RunPhase, RunState
 from solare.engine.toolpath import prepend_local_tools_to_path
 
@@ -51,6 +52,7 @@ __all__ = [
     "needs_preprocessing",
     "output_name",
     "prepend_local_tools_to_path",
+    "relocate_job_dir",
     "resolve_subtitle_sources",
     "transcode_audio_track",
 ]
