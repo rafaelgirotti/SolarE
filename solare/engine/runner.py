@@ -287,6 +287,15 @@ class JobRunner:
             self._state.waiting_for_solar = True
         self._log(f"waiting for at least {gate.min_watts:.0f}W solar production before starting")
         while not self._stop.is_set() and not self._solar_override.is_set():
+            # Av1anRunner.get_progress() only reads done.json from disk - safe to call before
+            # the process itself exists, so any progress already resumable from a prior run
+            # shows on the dashboard immediately instead of a "0/1" placeholder throughout the
+            # entire wait.
+            progress = self._av1an.get_progress()
+            if progress is not None:
+                with self._lock:
+                    self._state.frames_done = progress.done_frames
+                    self._state.frames_total = progress.total_frames
             if self._solar_poller.is_producing(gate.min_watts) is True:
                 break
             time.sleep(_POLL_INTERVAL_SECONDS)
