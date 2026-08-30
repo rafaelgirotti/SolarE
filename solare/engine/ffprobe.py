@@ -55,6 +55,20 @@ def find_stream_index(
     return -1
 
 
+def get_sample_rate(file: Path, stream_selector: str) -> int:
+    """`stream_selector` is an ffprobe stream-selector string, e.g. "a:0"."""
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-select_streams", stream_selector,
+            "-show_entries", "stream=sample_rate",
+            "-of", "csv=p=0", "--", str(file),
+        ],
+        capture_output=True, text=True, check=True,
+    )
+    return int(result.stdout.strip())
+
+
 def get_duration(file: Path) -> float:
     result = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", "--", str(file)],

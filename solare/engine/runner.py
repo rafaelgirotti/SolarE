@@ -172,7 +172,11 @@ class JobRunner:
             self._log(f"transcoding audio track {t}: {track.title}")
             audio_out = item.out_file.parent / f"{item.out_file.stem}.audio{t}.tmp.mka"
             transcode_audio_track(
-                item.src_file, track, self._config.audio_source_language, audio_out
+                item.src_file,
+                track,
+                self._config.audio_source_language,
+                audio_out,
+                speed_correction=self._config.video.speed_correction,
             )
             audio_files.append(audio_out)
 

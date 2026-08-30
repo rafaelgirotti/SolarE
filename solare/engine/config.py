@@ -13,6 +13,50 @@ from pathlib import Path
 
 
 @dataclass
+class DeinterlaceSettings:
+    """QTGMC (havsfunc) deinterlacing, applied as a VapourSynth preprocessing pass ahead of
+    av1an's own chunking/encoding - see engine/preprocess.py. `params` passes straight through as
+    QTGMC keyword arguments (e.g. {"Preset": "Slower", "MatchPreset": "Slower"}), since QTGMC has
+    far more tunable parameters than are worth enumerating as typed fields - same passthrough
+    philosophy as VideoSettings.encoder_params."""
+
+    tff: bool = True  # field order: top-field-first (most common) vs bottom-field-first
+    fps_divisor: int = 2  # QTGMC's own default (1) bobs to double-rate output (one frame per
+    # field) - verified directly against a real clip (50 interlaced frames in, 100 out at
+    # FPSDivisor=1). 2 gives single-rate output (one frame per original interlaced frame,
+    # matching input frame count) - the right choice unless the source has genuine per-field
+    # motion worth preserving as its own frames, which most re-interlaced-for-broadcast content
+    # doesn't have.
+    params: dict[str, str | int | float | bool] = field(default_factory=dict)
+
+
+@dataclass
+class SpeedCorrection:
+    """Corrects a linear speed shift (e.g. a PAL-television master of a source that was mastered
+    at a different frame rate) - both video and audio need this together, or their sync drifts.
+    Only a 1:1 frame-timing relabel plus an audio pitch/tempo correction, not resampling: this
+    assumes every source frame already exists and is just mistimed, not that frames were
+    added/dropped (that's a different problem this doesn't address)."""
+
+    source_fps: str  # e.g. "25" - the rate the source is currently timed at
+    target_fps: str  # e.g. "24000/1001" - the rate it should actually play at
+
+    @property
+    def ratio(self) -> float:
+        """target/source - multiply a duration or sample rate by this to correct it. Below 1.0
+        means the source plays too fast and needs slowing down (and its audio pitch dropped to
+        match); above 1.0 is the reverse."""
+        return _parse_fps_fraction(self.target_fps) / _parse_fps_fraction(self.source_fps)
+
+
+def _parse_fps_fraction(fps: str) -> float:
+    if "/" in fps:
+        num, den = fps.split("/", 1)
+        return float(num) / float(den)
+    return float(fps)
+
+
+@dataclass
 class VideoSettings:
     codec: str
     preset: str
@@ -25,6 +69,8 @@ class VideoSettings:
     # own chunk method when resuming a run that used a different one (see temp_dir below)
     temp_dir: str | None = None  # override av1an's --temp path (default: computed next to the
     # output file); needed to resume progress sitting in a folder outside that naming convention
+    deinterlace: DeinterlaceSettings | None = None
+    speed_correction: SpeedCorrection | None = None
 
 
 @dataclass
@@ -118,6 +164,22 @@ def _parse_subtitle(entry: dict) -> Subtitle:
     )
 
 
+def _parse_deinterlace(entry: dict | None) -> DeinterlaceSettings | None:
+    if entry is None:
+        return None
+    return DeinterlaceSettings(
+        tff=entry.get("tff", True),
+        fps_divisor=entry.get("fpsDivisor", 1),
+        params=entry.get("params", {}),
+    )
+
+
+def _parse_speed_correction(entry: dict | None) -> SpeedCorrection | None:
+    if entry is None:
+        return None
+    return SpeedCorrection(source_fps=entry["sourceFps"], target_fps=entry["targetFps"])
+
+
 def load_config(path: str | Path) -> TitleConfig:
     path = Path(path)
     with path.open() as f:
@@ -134,6 +196,8 @@ def load_config(path: str | Path) -> TitleConfig:
         dovi_rpu=video_data.get("doviRpu"),
         chunk_method=video_data.get("chunkMethod", "lsmash"),
         temp_dir=video_data.get("tempDir"),
+        deinterlace=_parse_deinterlace(video_data.get("deinterlace")),
+        speed_correction=_parse_speed_correction(video_data.get("speedCorrection")),
     )
 
     source = data["source"]

@@ -7,6 +7,11 @@ point PATH at your own tools instead (or use `solare.engine.prepend_local_tools_
 VapourSynth is the one dependency that can't be bundled in `tools/` - it needs a real, registered
 install plus its own chunking plugins (`lsmas`/`ffms2`/`bs`/`vszip`/`julek` via `vsrepo`), verified
 directly against a real encode end to end. See the README's Requirements section.
+
+If `video.deinterlace`/`video.speedCorrection` is configured, av1an's own `-i` points at a
+generated VapourSynth script (see engine/preprocess.py) instead of the raw source file - av1an
+accepts a `.vpy` script as input directly, so chunking/encoding reads straight off the filtered
+output with no separate full-file transcode pass.
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ import psutil
 from solare import platform as solare_platform
 from solare.engine.chunk_progress import ChunkProgress, find_latest_log, parse_chunk_progress
 from solare.engine.config import TitleConfig
+from solare.engine.preprocess import generate_vpy, needs_preprocessing
 
 
 @dataclass
@@ -60,12 +66,28 @@ class Av1anRunner:
         self._process: subprocess.Popen | None = None
         self._suspended_pids: set[int] = set()
 
+        # Created eagerly (not deferred to start()) so build_args() reflects the real input path
+        # even if called before start() - e.g. for logging what's about to run.
+        self._temp_dir.mkdir(parents=True, exist_ok=True)
+        self._input_path = self._src_file
+        if needs_preprocessing(config):
+            # Deliberately NOT inside temp_dir: verified directly that av1an wipes/recreates its
+            # own --temp directory on a fresh (non-resume) start, which silently deleted this file
+            # out from under it - av1an would crash with no log output at all (a different flavor
+            # of the same "don't put anything of your own inside av1an's --temp" lesson as
+            # start()'s cwd handling below). video_out.parent is already where the log file goes,
+            # so it's already established as solare-owned, av1an-observed-but-not-managed space.
+            self._video_out.parent.mkdir(parents=True, exist_ok=True)
+            vpy_path = self._video_out.parent / f"{self._video_out.stem}.preprocess.vpy"
+            generate_vpy(config, self._src_file, vpy_path, self._chunk_method)
+            self._input_path = vpy_path
+
     def build_args(self) -> list[str]:
         video = self._config.video
         video_params = f"--preset {video.preset} --crf {video.crf} {video.encoder_params}".strip()
         args = [
             "av1an",
-            "-i", str(self._src_file),
+            "-i", str(self._input_path),
             "-o", str(self._video_out),
             "-e", video.codec,
             "-v", video_params,
@@ -84,8 +106,8 @@ class Av1anRunner:
         if video.crop:
             args += ["-f", f"-vf crop={video.crop}"]
         # done.json only exists once a real prior run has made progress - a better resumability
-        # signal than bare directory existence, which start() now creates unconditionally before
-        # launching (needed as av1an's own cwd), so it would otherwise always be true.
+        # signal than bare directory existence, which __init__ now creates unconditionally (needed
+        # early for preprocess.vpy generation, see __init__), so it would otherwise always be true.
         if (self._temp_dir / "done.json").exists():
             args += ["-r"]  # resume from an existing --temp dir rather than starting over
         return args
@@ -102,7 +124,7 @@ class Av1anRunner:
         # av1an is about to create/manage made it fail outright (STATUS_DLL_NOT_FOUND-style
         # generic crash, no log, nothing written) - likely a conflict between av1an trying to
         # (re)create that directory and it also being the process's own working directory.
-        self._temp_dir.mkdir(parents=True, exist_ok=True)
+        # (temp_dir itself is already created in __init__.)
         self._video_out.parent.mkdir(parents=True, exist_ok=True)
         self._process = subprocess.Popen(
             self.build_args(),
