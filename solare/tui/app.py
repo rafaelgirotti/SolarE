@@ -219,12 +219,19 @@ class SolarEApp(App):
             self._render_job_idle()
 
     def _render_job_idle(self) -> None:
-        self.query_one("#job_meta", Static).update(
-            "No config loaded - press [b]C[/b] or click [b]Choose config[/b] below to pick one."
-        )
+        if self._config is not None:
+            text = (
+                f"[b]{self._config.title}[/b] loaded - {self._config.settings_summary}\n"
+                "Press [b]S[/b] or click [b]Start[/b] below to begin."
+            )
+            border_title = f" {self._config.title} "
+        else:
+            text = "No config loaded - press [b]C[/b] or click [b]Choose config[/b] below to pick one."
+            border_title = " SolarE "
+        self.query_one("#job_meta", Static).update(text)
         self.query_one("#chunks_bar", TextProgressBar).update_progress(0, 1, "")
         self.query_one("#job_footer", Static).update("")
-        self.query_one("#job_panel", Vertical).border_title = " SolarE "
+        self.query_one("#job_panel", Vertical).border_title = border_title
 
     def _render_job_panel(self, job: JobState) -> None:
         elapsed = datetime.datetime.now() - job.started_at
