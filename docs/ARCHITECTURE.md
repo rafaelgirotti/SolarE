@@ -23,6 +23,13 @@ the entire live process tree, re-walked on every check rather than enumerated on
 that spawns mid-pause is caught on the very next check instead of running unpaused until the
 pause ends.
 
+## Optional preprocessing is a VapourSynth script, not a separate pass
+Deinterlacing and linear speed correction (a source mastered at the wrong frame rate) are both
+expressed as a generated VapourSynth script that `av1an` reads directly as its own input -
+`av1an` accepts a `.vpy` script exactly as it would a video file, so chunking and encoding read
+straight off the filtered output. No intermediate file is written and no separate full-file
+transcode pass runs first.
+
 ## Repo structure
 - `docs/` - committed, kept strictly to this tool's own architecture (this file). No personal
   file paths, no encoding-domain specifics, no development history.

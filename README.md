@@ -1,35 +1,37 @@
 # SolarE
 
-A video re-encoding orchestrator with solar-aware scheduling, crash-resumable chunked encoding,
-real OS-level pause/resume, and live hardware monitoring.
+A video re-encoding orchestrator with solar generation monitoring, crash-resumable chunked
+encoding, OS-level pause/resume, and live hardware monitoring.
 
 ## What makes this different
 
-- **Solar-aware scheduling.** Gates CPU-heavy encoding to actual panel-production hours instead
-  of a fixed clock window, polling real inverter data rather than guessing.
+- **Solar monitoring built in.** Live generation, today/month/lifetime totals, and rated capacity
+  from a Growatt inverter, polled independently of any running job. (Gating the encode itself to
+  production hours is on the roadmap, not wired up yet - see Status.)
 - **Crash-resumable, chunked encoding.** Video encoding is split into independently-encoded
   chunks (via [`av1an`](https://github.com/rust-av/Av1an)) - a hard kill, a power outage, or a
   deliberate pause loses at most one in-progress chunk, not the whole job.
-- **Real pause/resume, not just a stop button.** A deliberate pause (solar dipping, or a manual
-  toggle) suspends the encode at the OS process level - zero work lost, resumes instantly,
-  regardless of how long the pause lasts.
-- **Actually monitors your hardware.** Live CPU/GPU/RAM stats and temperatures alongside encode
-  progress, not a bare progress bar.
-- **HDR/Dolby-Vision aware.** Real Dolby Vision RPU passthrough, with x265/SVT-AV1 encoder
-  parameters fully exposed and configurable per title rather than hardcoded.
+- **OS-level pause/resume, not just a stop button.** A manual pause suspends the encode at the
+  process level - zero work lost, resumes instantly regardless of how long the pause lasts.
+- **Hardware monitoring alongside the job.** Live CPU/GPU/RAM stats and temperatures next to
+  encode progress, not a bare progress bar.
+- **HDR/Dolby-Vision aware.** Dolby Vision RPU passthrough, with x265/SVT-AV1 encoder parameters
+  fully exposed and configurable per title rather than hardcoded.
+- **Optional deinterlacing and speed correction.** QTGMC-based deinterlacing and linear frame-rate
+  correction run as a VapourSynth preprocessing pass ahead of the encode itself - no separate
+  transcode step.
 - **Cross-platform.** Windows today, Linux support landing alongside it - platform-specific code
   (hardware sensors, process suspend/resume) is isolated behind a common interface rather than
   scattered through the codebase.
 
 ## Status
 
-Functional end to end: load a real title config in the dashboard, press Start, and it drives a
-real `av1an` encode plus the full Dolby Vision/audio/subtitle/mux pipeline in the background,
-rendering real progress, a real ETA, and real pause/resume against the live process tree - not a
-simulation. Solar generation is the one panel still simulated (see `solare/tui/mock.py` for why).
-Still ahead: broader testing against real-world titles, and polish. See
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for design details and [Roadmap](#roadmap) below
-for what's tracked.
+Load a title config in the dashboard, press Start, and it drives an `av1an` encode plus the full
+Dolby Vision/audio/subtitle/mux pipeline in the background, with progress, ETA, and pause/resume
+tracking the live process tree. Solar monitoring polls a Growatt inverter independently of any
+running job. Gating the encode to production hours isn't wired up yet - the pieces it needs
+(`GrowattClient.is_producing()`, `JobRunner.pause()`/`resume()`) both exist, just not connected to
+each other. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for design details.
 
 ## Requirements
 
@@ -46,18 +48,22 @@ for what's tracked.
   - `mkvmerge` (from [MKVToolNix](https://mkvtoolnix.download/)).
   - [`dovi_tool`](https://github.com/quietvoid/dovi_tool), only if you need Dolby Vision passthrough.
   - [VapourSynth](https://www.vapoursynth.com/) plus its chunking plugins (L-SMASH/FFMS2/BestSource)
-    - **install via the official installer**, don't try to drop a portable copy in `tools/`.
-    Verified directly: a byte-for-byte copy of a working install, just relocated, fails to
-    initialize - its loader depends on being discovered through a real install, not just being on
-    `PATH`. Follow [av1an's own installation instructions](https://github.com/rust-av/Av1an#installation)
-    for the plugin setup (on Windows: `python3 vsrepo.py install lsmas ffms2 bs vszip julek` from
+    - install via the official installer; a relocated/portable copy won't initialize, since its
+    loader depends on OS-level registration, not just being on `PATH`. Follow
+    [av1an's own installation instructions](https://github.com/rust-av/Av1an#installation) for the
+    plugin setup (on Windows: `python3 vsrepo.py install lsmas ffms2 bs vszip julek` from
     VapourSynth's install directory) - this project doesn't duplicate that guide.
+  - For deinterlacing (`video.deinterlace` in a title config): QTGMC's own dependency chain,
+    installed into that same VapourSynth: `vsrepo install havsfunc mvsfunc mv rgvs nnedi3
+    nnedi3_resample nnedi3_weights fmtc znedi3`, plus `pip install vsutil` (havsfunc's one
+    pure-Python dependency, not a `vsrepo` package) into VapourSynth's own Python. Not needed
+    unless a title actually uses `deinterlace`.
 
   **Convenience**: drop any of the above (except VapourSynth) into `tools/<name>/` next to this
   project (e.g. `tools/ffmpeg/ffmpeg.exe`) and `solare` prepends them to `PATH` automatically - no
   global install needed. `tools/` is gitignored; nothing in it is ever committed (these are large,
   platform-specific, often GPL-licensed binaries that don't belong in a git history).
-- Optional, only if you want solar-aware scheduling: a [Growatt](https://www.growatt.com/)
+- Optional, only if you want solar generation monitoring: a [Growatt](https://www.growatt.com/)
   inverter reachable via their cloud API (`--extra solar`).
 - Optional, only for NVIDIA GPU stats in the hardware monitor: an NVIDIA GPU with drivers
   installed (`--extra gpu`). CPU/RAM monitoring works without it.
@@ -99,7 +105,7 @@ paths, video codec and encoder params, audio track handling, subtitles). Real pe
 are gitignored - only `config.example.json` is tracked in the repo, so your own paths and
 settings never end up in version control.
 
-Solar-aware scheduling is optional and needs its own credentials file:
+Solar monitoring is optional and needs its own credentials file:
 
 ```bash
 cp credentials.example.json credentials.json
@@ -117,9 +123,9 @@ uv run solare
 ```
 
 Launches the Textual dashboard. CPU/GPU/RAM stats are read live from your machine; once a config
-is loaded and started, encode-job progress (chunks, ETA, log lines) comes from a real `av1an`
-process - this actually encodes your source file. Make sure you're pointed at the right config
-before pressing Start.
+is loaded and started, encode-job progress (chunks, ETA, log lines) comes from the `av1an` process
+actually encoding your source file. Make sure you're pointed at the right config before pressing
+Start.
 
 With no arguments, the dashboard starts idle - press `C` or click **Choose config** to pick a
 `.json` file, then **Start**. `Ctrl+C` quits; `P` pauses/resumes, `T` stops.
@@ -147,7 +153,7 @@ SolarE/                    # this repo (the folder name itself doesn't matter)
     ├── platform/              # OS-specific code behind a common interface
     │   ├── windows/
     │   └── linux/
-    ├── solar/                 # inverter polling / solar-aware scheduling
+    ├── solar/                 # inverter polling / solar generation monitoring
     └── tui/                   # the Textual dashboard
 ```
 
@@ -156,16 +162,6 @@ Run the full dependency + import sanity check with:
 ```bash
 uv sync && uv run python -c "import solare; import solare.engine; import solare.hwmonitor; import solare.platform; import solare.solar; import solare.tui; print('ok')"
 ```
-
-## Roadmap
-
-- [x] Project skeleton, `uv`/dependency setup, architecture docs
-- [x] Solar polling and hardware-monitoring modules
-- [x] Textual dashboard shell (mock data)
-- [x] Config schema + job queue engine
-- [x] `av1an` orchestration with process-tree-aware pause/resume
-- [x] Dolby Vision injection + audio/subtitle/mux pipeline
-- [x] Wire the dashboard to the real engine
 
 ## License
 
