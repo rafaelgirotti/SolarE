@@ -24,3 +24,9 @@ def resume_process(pid: int) -> bool:
         return True
     except OSError:
         return False
+
+
+def subprocess_creation_flags() -> int:
+    """No Windows-style shared-console-title hijacking risk on Linux - a child process here has
+    no equivalent way to reach back and rewrite the parent terminal's title bar unprompted."""
+    return 0

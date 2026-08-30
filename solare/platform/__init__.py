@@ -53,6 +53,21 @@ def resume_process(pid: int) -> bool:
     return False
 
 
+def subprocess_creation_flags() -> int:
+    """Extra `subprocess.Popen(creationflags=...)` value for launching an external encoder tool -
+    see the Windows implementation for why this matters there. 0 (a no-op) everywhere else."""
+    system = _platform.system()
+    if system == "Windows":
+        from solare.platform.windows.process import subprocess_creation_flags as _impl
+
+        return _impl()
+    if system == "Linux":
+        from solare.platform.linux.process import subprocess_creation_flags as _impl
+
+        return _impl()
+    return 0
+
+
 def vapoursynth_dll_dir():
     """Return the directory containing the registered VapourSynth install's vsscript.dll, or
     None if unregistered or not applicable on this platform (Linux's dynamic linker finds

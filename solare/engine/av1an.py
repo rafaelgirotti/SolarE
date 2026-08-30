@@ -131,6 +131,7 @@ class Av1anRunner:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             cwd=str(self._video_out.parent),
+            creationflags=solare_platform.subprocess_creation_flags(),
         )
 
     def poll(self) -> int | None:

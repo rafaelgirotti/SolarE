@@ -14,6 +14,7 @@ directly), so `PROCESS_SUSPEND_RESUME` is opened fresh via `OpenProcess` each ca
 from __future__ import annotations
 
 import ctypes
+import subprocess
 from ctypes import wintypes
 
 _ntdll = ctypes.WinDLL("ntdll")
@@ -47,3 +48,14 @@ def suspend_process(pid: int) -> bool:
 
 def resume_process(pid: int) -> bool:
     return _with_handle(pid, _ntdll.NtResumeProcess)
+
+
+def subprocess_creation_flags() -> int:
+    """Fully detaches a subprocess from any console, not just its stdout/stderr streams.
+
+    Verified directly against a real live encode: even with stdout/stderr redirected to DEVNULL,
+    a child console app can still hijack the *shared* console window's title via a bare
+    SetConsoleTitleW call, which bypasses stream redirection entirely - confirmed happening live
+    (av1an/x265's own progress text overwriting the dashboard's window title). CREATE_NO_WINDOW
+    gives the child no console at all, so there's nothing for it to call that API on."""
+    return subprocess.CREATE_NO_WINDOW
