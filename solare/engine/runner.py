@@ -54,11 +54,18 @@ class RunState:
     item_index: int = 0
     item_count: int = 0
     current_item_name: str = ""
-    chunks_done: int = 0
-    chunks_total: int = 0
+    frames_done: int = 0  # av1an's done.json is frame-based, not chunk-based - see
+    frames_total: int = 0  # ChunkProgress/ActiveChunkInfo for real per-chunk tracking
     chunk_progress: ChunkProgress | None = None
     paused: bool = False  # user-requested, via pause()
     solar_paused: bool = False  # auto, via solarGate - independent of the above, see module docstring
+    # Set whenever a pause window (manual or solar-gated) is currently open, cleared when it
+    # closes - lets a UI freeze a chunk's displayed elapsed time instead of it ticking through a
+    # suspend it isn't actually progressing through (item_paused_seconds alone only captures
+    # *closed* windows, not time elapsed in the one currently open).
+    pause_started_at: datetime.datetime | None = None
+    waiting_for_solar: bool = False  # blocking *before* av1an starts at all - distinct from
+    # solar_paused (which suspends an av1an already running); see JobRunner._wait_for_solar_gate
     error: str | None = None
     log_lines: list[str] = field(default_factory=list)
     started_at: datetime.datetime = field(default_factory=datetime.datetime.now)
@@ -74,6 +81,7 @@ class JobRunner:
         self._state = RunState(item_count=len(self._queue))
         self._paused = threading.Event()
         self._solar_gated = threading.Event()
+        self._solar_override = threading.Event()  # user chose to skip solar gating for this run
         self._stop = threading.Event()
         self._av1an: Av1anRunner | None = None
         self._solar_poller = solar_poller
@@ -83,12 +91,22 @@ class JobRunner:
     def start(self) -> None:
         self._thread.start()
 
+    def skip_solar_gate(self) -> None:
+        """Permanently disables solar gating (both the pre-start wait and the ongoing
+        auto-pause) for the rest of this run - not a one-time bypass of just the current wait,
+        since re-gating the moment production dips again would defeat the point of a deliberate
+        override."""
+        self._solar_override.set()
+        with self._lock:
+            self._state.waiting_for_solar = False
+
     def pause(self) -> None:
         self._paused.set()
         with self._lock:
             self._state.paused = True
             if self._pause_started_at is None:
                 self._pause_started_at = datetime.datetime.now()
+                self._state.pause_started_at = self._pause_started_at
 
     def resume(self) -> None:
         self._paused.clear()
@@ -106,11 +124,17 @@ class JobRunner:
             elapsed = (datetime.datetime.now() - self._pause_started_at).total_seconds()
             self._state.item_paused_seconds += elapsed
             self._pause_started_at = None
+            self._state.pause_started_at = None
 
     def _update_solar_gate(self) -> None:
         gate = self._config.solar_gate
         should_gate = False
-        if gate is not None and gate.enabled and self._solar_poller is not None:
+        if (
+            gate is not None
+            and gate.enabled
+            and self._solar_poller is not None
+            and not self._solar_override.is_set()
+        ):
             producing = self._solar_poller.is_producing(gate.min_watts)
             should_gate = producing is False  # None (no data yet) fails open, not gated
 
@@ -124,6 +148,7 @@ class JobRunner:
             self._state.solar_paused = should_gate
             if should_gate and self._pause_started_at is None:
                 self._pause_started_at = datetime.datetime.now()
+                self._state.pause_started_at = self._pause_started_at
             else:
                 self._maybe_close_pause_window_locked()
 
@@ -148,8 +173,8 @@ class JobRunner:
             with self._lock:
                 self._state.item_index = i + 1
                 self._state.current_item_name = item.src_file.name
-                self._state.chunks_done = 0
-                self._state.chunks_total = 0
+                self._state.frames_done = 0
+                self._state.frames_total = 0
                 self._state.chunk_progress = None
                 self._state.item_started_at = datetime.datetime.now()
                 self._state.item_paused_seconds = 0.0
@@ -178,9 +203,16 @@ class JobRunner:
 
         with self._lock:
             self._state.phase = RunPhase.VIDEO_ENCODE
+        # Constructing Av1anRunner is cheap prep work (creates temp_dir, generates the
+        # preprocessing script if configured) - safe to do regardless of solar state. Actually
+        # starting it is what launches real CPU work (VapourSynth indexing, scene detection, then
+        # encoding itself), which is what the wait below gates on.
         self._av1an = Av1anRunner(
             self._config, item.src_file, video_tmp, temp_dir, chunk_method=self._config.video.chunk_method
         )
+        self._wait_for_solar_gate_before_start()
+        if self._stop.is_set():
+            return
         self._av1an.start()
         self._log(f"video encode started: {item.src_file.name}")
 
@@ -244,6 +276,27 @@ class JobRunner:
             raise RuntimeError(f"integrity check failed: {result.reason}")
         self._log(f"integrity OK: {result.reason}")
 
+    def _wait_for_solar_gate_before_start(self) -> None:
+        """Blocks before av1an itself is ever launched, not just suspended after the fact -
+        av1an's own startup (VapourSynth indexing, scene detection) is real CPU work that a
+        post-start suspend can only interrupt already in progress, not prevent from happening."""
+        gate = self._config.solar_gate
+        if gate is None or not gate.enabled or self._solar_poller is None:
+            return
+        with self._lock:
+            self._state.waiting_for_solar = True
+        self._log(f"waiting for at least {gate.min_watts:.0f}W solar production before starting")
+        while not self._stop.is_set() and not self._solar_override.is_set():
+            if self._solar_poller.is_producing(gate.min_watts) is True:
+                break
+            time.sleep(_POLL_INTERVAL_SECONDS)
+        with self._lock:
+            self._state.waiting_for_solar = False
+        if self._solar_override.is_set():
+            self._log("solar wait skipped by user - starting now")
+        elif not self._stop.is_set():
+            self._log("solar production confirmed - starting video encode")
+
     def _wait_for_av1an(self) -> int | None:
         while True:
             if self._stop.is_set():
@@ -255,8 +308,8 @@ class JobRunner:
             chunk_progress = self._av1an.get_chunk_progress()
             with self._lock:
                 if progress is not None:
-                    self._state.chunks_done = progress.done_frames
-                    self._state.chunks_total = progress.total_frames
+                    self._state.frames_done = progress.done_frames
+                    self._state.frames_total = progress.total_frames
                 self._state.chunk_progress = chunk_progress
             exit_code = self._av1an.poll()
             if exit_code is not None:

@@ -28,8 +28,8 @@ class JobState:
     phase: str
     item_index: int
     item_count: int
-    chunks_done: int
-    chunks_total: int
+    frames_done: int
+    frames_total: int
     settings_summary: str
     config_path: str
     eta_text: str
@@ -39,6 +39,7 @@ class JobState:
     output_used_gb: float
     started_at: datetime.datetime
     active_chunks: list[ActiveChunkInfo]
+    waiting_for_solar: bool
 
 
 @dataclass

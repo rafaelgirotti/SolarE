@@ -54,13 +54,19 @@ class ChunkProgress:
             return None
         return sum(self.recent_durations_seconds) / len(self.recent_durations_seconds)
 
-    def is_stuck(self, chunk: ActiveChunk, now: datetime.datetime | None = None) -> bool:
+    def is_stuck(self, chunk: ActiveChunk, elapsed_seconds: float | None = None) -> bool:
         """Heuristic, not certainty: flags a chunk running far longer than its recent peers, with
-        a flat grace floor so a short recent average doesn't make this hair-trigger."""
+        a flat grace floor so a short recent average doesn't make this hair-trigger.
+
+        `elapsed_seconds` lets a caller pass a pause-adjusted value instead of the raw wall-clock
+        one - a chunk frozen by a suspend isn't actually "stuck", it just isn't progressing, and
+        the raw elapsed time keeps growing throughout any pause regardless of duration."""
         avg = self.avg_duration_seconds
         if avg is None:
             return False
-        return chunk.elapsed_seconds(now) > max(avg * _STUCK_MULTIPLIER, _STUCK_FLOOR_SECONDS)
+        if elapsed_seconds is None:
+            elapsed_seconds = chunk.elapsed_seconds()
+        return elapsed_seconds > max(avg * _STUCK_MULTIPLIER, _STUCK_FLOOR_SECONDS)
 
 
 def find_latest_log(logs_dir: Path) -> Path | None:

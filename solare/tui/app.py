@@ -54,6 +54,7 @@ class SolarEApp(App):
         ("s", "start", "Start"),
         ("p", "toggle_pause", "Pause/Resume"),
         ("t", "stop", "Stop"),
+        ("g", "skip_solar", "Skip solar wait"),
     ]
 
     def __init__(self, config_path: str | Path | None = None, auto_start: bool = False) -> None:
@@ -91,6 +92,7 @@ class SolarEApp(App):
             yield Button("Start [S]", id="btn_start")
             yield Button("Pause [P]", id="btn_pause")
             yield Button("Stop [T]", id="btn_stop")
+            yield Button("Skip solar wait [G]", id="btn_skip_solar")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -121,6 +123,7 @@ class SolarEApp(App):
             "btn_start": self.action_start,
             "btn_pause": self.action_toggle_pause,
             "btn_stop": self.action_stop,
+            "btn_skip_solar": self.action_skip_solar,
         }[event.button.id]()
 
     def action_choose_config(self) -> None:
@@ -178,6 +181,11 @@ class SolarEApp(App):
         self._phase = AppPhase.LOADED
         self._update_controls()
 
+    def action_skip_solar(self) -> None:
+        if self._phase not in (AppPhase.RUNNING, AppPhase.PAUSED) or self._job_source is None:
+            return
+        self._job_source.skip_solar_gate()
+
     def _update_controls(self) -> None:
         self.query_one("#btn_choose", Button).disabled = self._phase in (
             AppPhase.RUNNING,
@@ -190,6 +198,14 @@ class SolarEApp(App):
         self.query_one("#btn_stop", Button).disabled = self._phase not in (
             AppPhase.RUNNING,
             AppPhase.PAUSED,
+        )
+        gate_configured = (
+            self._config is not None
+            and self._config.solar_gate is not None
+            and self._config.solar_gate.enabled
+        )
+        self.query_one("#btn_skip_solar", Button).disabled = not (
+            gate_configured and self._phase in (AppPhase.RUNNING, AppPhase.PAUSED)
         )
 
     def _refresh(self) -> None:
@@ -223,10 +239,10 @@ class SolarEApp(App):
             meta_lines.append(f"[b]{_label('Chunks')}[/b]{self._format_active_chunks(job.active_chunks)}")
         self.query_one("#job_meta", Static).update("\n".join(meta_lines))
 
-        pct = 100.0 * job.chunks_done / job.chunks_total
+        pct = 100.0 * job.frames_done / job.frames_total
         bar = self.query_one("#chunks_bar", TextProgressBar)
         bar.update_progress(
-            job.chunks_done, job.chunks_total, f"{job.chunks_done}/{job.chunks_total} chunks - {pct:.1f}%"
+            job.frames_done, job.frames_total, f"{job.frames_done}/{job.frames_total} frames - {pct:.1f}%"
         )
 
         disk_color = colors.falling_gradient(
