@@ -95,6 +95,10 @@ class AudioTrack:
     mapping_family: str | None = None  # libopus channel-layout hint for >2-channel tracks
     downmix_filter: str | None = None  # ffmpeg -af filter, used when kind == "downmix"
     channel_fix: str | None = None  # ffmpeg -af filter to remap channel order before transcoding
+    source_language: str | None = None  # overrides audio.sourceLanguage for this track only -
+    # every title until now only ever produced multiple output tracks (native + downmix) from one
+    # source language; a genuine multi-dub source (e.g. two different language tracks, each
+    # becoming its own output track) needs each track able to point at its own source stream.
 
 
 @dataclass
@@ -159,6 +163,7 @@ def _parse_audio_track(entry: dict) -> AudioTrack:
         mapping_family=entry.get("mappingFamily"),
         downmix_filter=entry.get("downmixFilter"),
         channel_fix=entry.get("channelFix"),
+        source_language=entry.get("sourceLanguage"),
     )
 
 

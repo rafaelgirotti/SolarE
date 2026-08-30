@@ -216,7 +216,7 @@ class JobRunner:
             transcode_audio_track(
                 item.src_file,
                 track,
-                self._config.audio_source_language,
+                track.source_language or self._config.audio_source_language,
                 audio_out,
                 speed_correction=self._config.video.speed_correction,
             )
