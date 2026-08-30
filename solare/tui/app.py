@@ -4,9 +4,10 @@ Hardware stats are real (`solare.hwmonitor`, polled independently of any loaded 
 before a config is chosen). Once a config is loaded and started, encode-job progress comes from a
 real `solare.engine.JobRunner` (via `LiveJobSource`) - a real `av1an` process, real Dolby
 Vision/audio/mux passes, running in a background thread so the dashboard's own refresh tick never
-blocks on it. Solar generation is real too (`solare.tui.solar_poller`, gated on a gitignored
+blocks on it. Solar generation is real too (`solare.solar.SolarPoller`, gated on a gitignored
 `credentials.json` at the repo root - see README) - only what `plant_energy_data` actually
-reports, no weather/PV-string/AC-voltage detail (a different, unwired Growatt endpoint).
+reports, no weather/PV-string/AC-voltage detail (a different, unwired Growatt endpoint). The same
+poller also drives JobRunner's solar-gated auto-pause, when a title config enables it.
 """
 
 from __future__ import annotations
@@ -22,12 +23,11 @@ from textual.widgets import Button, Footer, RichLog, Static
 
 from solare.engine import JobRunner, TitleConfig, load_config, prepend_local_tools_to_path
 from solare.hwmonitor import HardwareMonitor, HardwareSnapshot
-from solare.solar import GrowattCredentials
+from solare.solar import GrowattCredentials, SolarPoller
 from solare.tui import colors, links
 from solare.tui.live_job import LiveJobSource
 from solare.tui.picker import ConfigPickerScreen
 from solare.tui.progress_bar import TextProgressBar
-from solare.tui.solar_poller import SolarPoller
 from solare.tui.state import ActiveChunkInfo, JobState, SolarState
 
 _REFRESH_INTERVAL_SECONDS = 1.0
@@ -148,7 +148,7 @@ class SolarEApp(App):
         if self._phase != AppPhase.LOADED or self._config is None:
             return
         try:
-            runner = JobRunner(self._config)
+            runner = JobRunner(self._config, solar_poller=self._solar_poller)
         except (OSError, FileNotFoundError, RuntimeError) as e:
             self.notify(f"Couldn't start: {e}", severity="error")
             return

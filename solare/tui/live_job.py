@@ -38,6 +38,8 @@ class LiveJobSource:
             eta_text = "done"
         elif state.paused:
             eta_text = "paused"
+        elif state.solar_paused:
+            eta_text = "paused (waiting for sun)"
         else:
             active_seconds = (
                 now - state.item_started_at

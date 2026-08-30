@@ -6,6 +6,12 @@ Only the video-encode phase is pausable (matching where pausing actually matters
 running phase, not the quick one-shot passes around it). `set_suspended` is re-asserted every
 poll while paused, not just once on the transition edge, so a worker that spawns mid-pause gets
 caught on the very next check (see Av1anRunner.set_suspended).
+
+A config's `solarGate` composes with manual pause rather than replacing it: the effective suspend
+state is manual-pause OR solar-gated, so solar coming back never auto-resumes a job the user
+paused themselves, and pausing manually during a solar gate doesn't get silently overridden either
+way once the sun does the same. Missing solar data (poller not yet polled, or no poller at all)
+fails open - never gates on absence of information.
 """
 
 from __future__ import annotations
@@ -27,6 +33,7 @@ from solare.engine.dolby_vision import inject_rpu
 from solare.engine.integrity import check_output_integrity
 from solare.engine.mux import mux_episode, resolve_subtitle_sources
 from solare.engine.queue import QueueItem, build_queue
+from solare.solar import SolarPoller
 
 _POLL_INTERVAL_SECONDS = 1.0
 
@@ -50,7 +57,8 @@ class RunState:
     chunks_done: int = 0
     chunks_total: int = 0
     chunk_progress: ChunkProgress | None = None
-    paused: bool = False
+    paused: bool = False  # user-requested, via pause()
+    solar_paused: bool = False  # auto, via solarGate - independent of the above, see module docstring
     error: str | None = None
     log_lines: list[str] = field(default_factory=list)
     started_at: datetime.datetime = field(default_factory=datetime.datetime.now)
@@ -59,14 +67,16 @@ class RunState:
 
 
 class JobRunner:
-    def __init__(self, config: TitleConfig):
+    def __init__(self, config: TitleConfig, solar_poller: SolarPoller | None = None):
         self._config = config
         self._queue: list[QueueItem] = build_queue(config)
         self._lock = threading.Lock()
         self._state = RunState(item_count=len(self._queue))
         self._paused = threading.Event()
+        self._solar_gated = threading.Event()
         self._stop = threading.Event()
         self._av1an: Av1anRunner | None = None
+        self._solar_poller = solar_poller
         self._pause_started_at: datetime.datetime | None = None
         self._thread = threading.Thread(target=self._run, daemon=True)
 
@@ -77,16 +87,45 @@ class JobRunner:
         self._paused.set()
         with self._lock:
             self._state.paused = True
-            self._pause_started_at = datetime.datetime.now()
+            if self._pause_started_at is None:
+                self._pause_started_at = datetime.datetime.now()
 
     def resume(self) -> None:
         self._paused.clear()
         with self._lock:
             self._state.paused = False
-            if self._pause_started_at is not None:
-                elapsed = (datetime.datetime.now() - self._pause_started_at).total_seconds()
-                self._state.item_paused_seconds += elapsed
-                self._pause_started_at = None
+            self._maybe_close_pause_window_locked()
+
+    def _maybe_close_pause_window_locked(self) -> None:
+        """Caller must already hold self._lock. Only actually stops the elapsed-time clock once
+        neither pause source (manual or solar-gated) is still active - otherwise a solar gate
+        clearing while the user has also manually paused would incorrectly resume ETA accounting."""
+        if self._paused.is_set() or self._solar_gated.is_set():
+            return
+        if self._pause_started_at is not None:
+            elapsed = (datetime.datetime.now() - self._pause_started_at).total_seconds()
+            self._state.item_paused_seconds += elapsed
+            self._pause_started_at = None
+
+    def _update_solar_gate(self) -> None:
+        gate = self._config.solar_gate
+        should_gate = False
+        if gate is not None and gate.enabled and self._solar_poller is not None:
+            producing = self._solar_poller.is_producing(gate.min_watts)
+            should_gate = producing is False  # None (no data yet) fails open, not gated
+
+        if should_gate == self._solar_gated.is_set():
+            return
+        if should_gate:
+            self._solar_gated.set()
+        else:
+            self._solar_gated.clear()
+        with self._lock:
+            self._state.solar_paused = should_gate
+            if should_gate and self._pause_started_at is None:
+                self._pause_started_at = datetime.datetime.now()
+            else:
+                self._maybe_close_pause_window_locked()
 
     def stop(self) -> None:
         self._stop.set()
@@ -147,8 +186,11 @@ class JobRunner:
 
         exit_code = self._wait_for_av1an()
         self._av1an = None
+        self._solar_gated.clear()  # only meaningful during video encode - the only pausable phase
         with self._lock:
             self._state.chunk_progress = None
+            self._state.solar_paused = False
+            self._maybe_close_pause_window_locked()
         if self._stop.is_set():
             return
         if exit_code != 0:
@@ -207,7 +249,8 @@ class JobRunner:
             if self._stop.is_set():
                 self._av1an.terminate()
                 return None
-            self._av1an.set_suspended(self._paused.is_set())
+            self._update_solar_gate()
+            self._av1an.set_suspended(self._paused.is_set() or self._solar_gated.is_set())
             progress = self._av1an.get_progress()
             chunk_progress = self._av1an.get_chunk_progress()
             with self._lock:

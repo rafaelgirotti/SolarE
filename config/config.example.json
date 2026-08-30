@@ -46,5 +46,6 @@
       "title": "English",
       "default": true
     }
-  ]
+  ],
+  "solarGate": null
 }

@@ -110,6 +110,16 @@ class Subtitle:
 
 
 @dataclass
+class SolarGate:
+    """Auto-pauses the video-encode phase (the same pause path a manual toggle uses) whenever
+    generation drops below min_watts - job-scheduling concern, not video-specific, hence living at
+    the top level of TitleConfig rather than under VideoSettings."""
+
+    enabled: bool
+    min_watts: float
+
+
+@dataclass
 class TitleConfig:
     path: Path
     title: str
@@ -124,6 +134,7 @@ class TitleConfig:
     audio_tracks: list[AudioTrack]
     subtitles: list[Subtitle] = field(default_factory=list)
     font_attach_dir: str | None = None
+    solar_gate: SolarGate | None = None
 
     @property
     def settings_summary(self) -> str:
@@ -169,7 +180,7 @@ def _parse_deinterlace(entry: dict | None) -> DeinterlaceSettings | None:
         return None
     return DeinterlaceSettings(
         tff=entry.get("tff", True),
-        fps_divisor=entry.get("fpsDivisor", 1),
+        fps_divisor=entry.get("fpsDivisor", 2),
         params=entry.get("params", {}),
     )
 
@@ -178,6 +189,12 @@ def _parse_speed_correction(entry: dict | None) -> SpeedCorrection | None:
     if entry is None:
         return None
     return SpeedCorrection(source_fps=entry["sourceFps"], target_fps=entry["targetFps"])
+
+
+def _parse_solar_gate(entry: dict | None) -> SolarGate | None:
+    if entry is None:
+        return None
+    return SolarGate(enabled=entry.get("enabled", True), min_watts=entry["minWatts"])
 
 
 def load_config(path: str | Path) -> TitleConfig:
@@ -223,4 +240,5 @@ def load_config(path: str | Path) -> TitleConfig:
         audio_tracks=[_parse_audio_track(t) for t in audio["tracks"]],
         subtitles=[_parse_subtitle(s) for s in data.get("subtitles", [])],
         font_attach_dir=data.get("fontAttachDir"),
+        solar_gate=_parse_solar_gate(data.get("solarGate")),
     )
