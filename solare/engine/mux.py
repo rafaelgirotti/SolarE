@@ -106,6 +106,8 @@ def mux_episode(
             f"-metadata:s:s:{s}", f"title={sub.title}",
             f"-metadata:s:s:{s}", f"language={sub.language}",
         ]
+        if sub.language_ietf:
+            args += [f"-metadata:s:s:{s}", f"language-ietf={sub.language_ietf}"]
 
     args += [str(out_file)]
     subprocess.run(args, check=True, capture_output=True, text=True)

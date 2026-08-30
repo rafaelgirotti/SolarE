@@ -99,6 +99,12 @@ class AudioTrack:
     # every title until now only ever produced multiple output tracks (native + downmix) from one
     # source language; a genuine multi-dub source (e.g. two different language tracks, each
     # becoming its own output track) needs each track able to point at its own source stream.
+    language_ietf: str | None = None  # optional BCP 47 tag (e.g. "pt-BR") written to Matroska's
+    # separate language-ietf element alongside the required ISO 639-2 `language` - verified
+    # directly: ffmpeg writes both correctly as distinct elements when given as separate
+    # -metadata keys, not one replacing the other. `language` (ISO 639-2, e.g. "por") is what
+    # every player reads; this is only for players that use the newer element to distinguish
+    # regional variants ISO 639-2 has no separate code for.
 
 
 @dataclass
@@ -111,6 +117,7 @@ class Subtitle:
     exclude_title_match: str | None = None
     match_title: str | None = None
     codec: str | None = None  # filter by codec_name (e.g. "ass" vs "hdmv_pgs_subtitle")
+    language_ietf: str | None = None  # see AudioTrack.language_ietf
 
 
 @dataclass
@@ -164,6 +171,7 @@ def _parse_audio_track(entry: dict) -> AudioTrack:
         downmix_filter=entry.get("downmixFilter"),
         channel_fix=entry.get("channelFix"),
         source_language=entry.get("sourceLanguage"),
+        language_ietf=entry.get("languageIetf"),
     )
 
 
@@ -177,6 +185,7 @@ def _parse_subtitle(entry: dict) -> Subtitle:
         exclude_title_match=entry.get("excludeTitleMatch"),
         match_title=entry.get("matchTitle"),
         codec=entry.get("codec"),
+        language_ietf=entry.get("languageIetf"),
     )
 
 

@@ -46,8 +46,10 @@ def transcode_audio_track(
         "-c:a", "libopus", "-b:a", track.bitrate,
         "-metadata:s:a:0", f"title={track.title}",
         "-metadata:s:a:0", f"language={track.language}",
-        str(out_file),
     ]
+    if track.language_ietf:
+        args += ["-metadata:s:a:0", f"language-ietf={track.language_ietf}"]
+    args += [str(out_file)]
     subprocess.run(args, check=True, capture_output=True, text=True)
 
 
