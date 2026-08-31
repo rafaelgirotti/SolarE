@@ -319,8 +319,7 @@ class JobRunner:
         current_video.unlink(missing_ok=True)
         for audio_file in audio_files:
             audio_file.unlink(missing_ok=True)
-        if temp_dir.exists():
-            shutil.rmtree(temp_dir, ignore_errors=True)
+        self._cleanup_temp_dir(temp_dir)
         if self._stop.is_set():
             return
 
@@ -337,6 +336,27 @@ class JobRunner:
             item.out_file.rename(item.out_file.with_suffix(item.out_file.suffix + ".FAILED"))
             raise RuntimeError(f"integrity check failed: {result.reason}")
         self._log(f"integrity OK: {result.reason}")
+
+    def _cleanup_temp_dir(self, temp_dir: Path) -> None:
+        """A just-exited av1an/vspipe child can still hold a handle on a chunk file for a moment
+        after the process reports done - confirmed live on Windows, where (unlike POSIX) a locked
+        file can't be unlinked at all. A previous version used `ignore_errors=True` here, which
+        silently ate that failure: the job still reported success while a full chunk folder sat
+        orphaned on disk, discovered only much later by manually browsing the output directory.
+        One retry after a short pause covers the transient-lock case; a real failure is logged
+        instead of swallowed, so it's visible on the dashboard rather than invisible."""
+        if not temp_dir.exists():
+            return
+        try:
+            shutil.rmtree(temp_dir)
+            return
+        except OSError:
+            pass
+        time.sleep(1.0)
+        try:
+            shutil.rmtree(temp_dir)
+        except OSError as e:
+            self._log(f"warning: failed to remove temp dir {temp_dir}: {e}")
 
     def _wait_for_solar_gate_before_start(self) -> None:
         """Blocks before av1an itself is ever launched, not just suspended after the fact -
