@@ -59,20 +59,22 @@ Screen {
 }
 
 #controls Button {
+    /* Deliberately no background/border/color override here - variant="success" (set in
+    app.py's compose()) already gives these the real embossed/3D Textual button look (lighter
+    top bevel edge, darker bottom edge, solid green fill), matching the confirm dialog's Yes
+    button. The old flat black-background/heavy-border style is gone; disabled state falls back
+    to Textual's own default (dimmed text opacity, same bevel), which already reads fine. */
     margin: 0 1;
     min-width: 18;
-    background: #000000;
-    color: #33cc33;
-    border: heavy #33cc33;
 }
 
-#controls Button:hover {
-    background: #1a3a1a;
-}
-
-#controls Button:disabled {
-    color: #4a5a4a;
-    border: heavy #4a5a4a;
+#controls Button:focus {
+    /* Same real bug as the confirm dialog's Yes button (see theme.tcss's ConfirmScreen section):
+    Textual's default Button:focus applies bold+reverse text-style, which swaps fg/bg and reads
+    as a stray dark band through the button - confirmed live here too (these buttons never had
+    a :focus override before, so clicking one and giving it focus would have shown the same
+    glitch). Neutralized the same way: keep bold, drop reverse. */
+    text-style: bold;
 }
 
 Footer {

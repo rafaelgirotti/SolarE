@@ -99,11 +99,14 @@ class SolarEApp(App):
         yield Static(id="solar_panel")
         yield RichLog(id="log_panel", max_lines=500, wrap=False, highlight=False)
         with Horizontal(id="controls"):
-            yield Button("Choose config \\[C]", id="btn_choose")
-            yield Button("Start \\[S]", id="btn_start")
-            yield Button("Pause \\[P]", id="btn_pause")
-            yield Button("Stop \\[T]", id="btn_stop")
-            yield Button("Solar Gating: ON \\[G]", id="btn_solar_gate")
+            # variant="success" - same embossed/3D Textual button look already used for the
+            # confirm dialog's Yes button (see solare/tui/confirm.py), not the flat
+            # black-background style these used before.
+            yield Button("Choose config \\[C]", id="btn_choose", variant="success")
+            yield Button("Start \\[S]", id="btn_start", variant="success")
+            yield Button("Pause \\[P]", id="btn_pause", variant="success")
+            yield Button("Stop \\[T]", id="btn_stop", variant="success")
+            yield Button("Solar Gating: ON \\[G]", id="btn_solar_gate", variant="success")
         yield Footer()
 
     def on_mount(self) -> None:
