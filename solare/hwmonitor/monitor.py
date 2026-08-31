@@ -45,7 +45,10 @@ class HardwareMonitor:
             try:
                 pynvml.nvmlInit()
                 self._nvml_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-            except pynvml.NVMLError:
+            except Exception:  # noqa: BLE001 - a native library binding, not just NVMLError; a
+                # driver/library version mismatch (e.g. right after a GPU driver update) can
+                # surface as a raw OSError from the DLL load itself rather than a clean NVMLError.
+                # GPU stats are best-effort telemetry, never worth crashing the app over.
                 self._nvml_handle = None
 
     def poll(self) -> HardwareSnapshot:
@@ -73,7 +76,11 @@ class HardwareMonitor:
                 mem_info = pynvml.nvmlDeviceGetMemoryInfo(self._nvml_handle)
                 gpu_mem_used_mb = round(mem_info.used / (1024**2), 1)
                 gpu_mem_total_mb = round(mem_info.total / (1024**2), 1)
-            except pynvml.NVMLError:
+            except Exception:  # noqa: BLE001 - same reasoning as __init__'s nvmlInit catch above:
+                # a native binding call, not guaranteed to fail as a clean NVMLError, especially
+                # mid-session right as a driver update takes effect. Whatever fields were already
+                # read above this point keep their real values - only the ones after the failure
+                # point stay None, which the dashboard already renders per-field as "n/a".
                 pass
 
         return HardwareSnapshot(
