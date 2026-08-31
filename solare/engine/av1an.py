@@ -192,7 +192,15 @@ class Av1anRunner:
             for pid in current_pids - self._suspended_pids:
                 if solare_platform.suspend_process(pid):
                     self._suspended_pids.add(pid)
-            self._suspended_pids &= current_pids
+            # Drop only pids that have genuinely exited - NOT merely ones that fell out of
+            # current_pids. current_pids comes from root.children(recursive=True), which only
+            # finds processes still reachable through a *live* parent chain; a chunk's actual
+            # worker (x265/ffmpeg/vspipe) can keep running after an intermediate wrapper process
+            # that spawned it has already exited, making it unreachable via that walk even though
+            # it's still alive. Intersecting with current_pids there silently orphaned suspended
+            # workers - confirmed live, they were never resumed and sat frozen indefinitely,
+            # holding a chunk file open. psutil.pid_exists is the correct liveness check instead.
+            self._suspended_pids = {pid for pid in self._suspended_pids if psutil.pid_exists(pid)}
         else:
             for pid in self._suspended_pids:
                 solare_platform.resume_process(pid)
