@@ -126,11 +126,20 @@ ConfirmScreen {
 }
 
 #confirm_message {
+    width: 100%;
     color: #55ff55;
     text-style: bold;
+    text-align: center;
     margin-bottom: 1;
 }
 
-#confirm_hint {
-    color: #33cc33;
+#confirm_buttons {
+    width: 100%;
+    height: 3;
+    align: center middle;
+}
+
+#confirm_buttons Button {
+    margin: 0 1;
+    min-width: 12;
 }

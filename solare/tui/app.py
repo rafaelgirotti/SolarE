@@ -155,13 +155,19 @@ class SolarEApp(App):
             self._solar_poller.stop()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        {
+        # A modal screen's own button (e.g. ConfirmScreen's Yes/No) is expected to stop() its
+        # Button.Pressed event before it bubbles this far - .get() instead of direct indexing is
+        # just defense in depth against a future modal that forgets to, so one crashes the whole
+        # app instead of silently doing nothing.
+        action = {
             "btn_choose": self.action_choose_config,
             "btn_start": self.action_start,
             "btn_pause": self.action_toggle_pause,
             "btn_stop": self.action_stop,
             "btn_solar_gate": self.action_toggle_solar_gate,
-        }[event.button.id]()
+        }.get(event.button.id)
+        if action is not None:
+            action()
 
     def action_choose_config(self) -> None:
         if self._phase in (AppPhase.RUNNING, AppPhase.PAUSED):
