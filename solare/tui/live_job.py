@@ -7,7 +7,37 @@ import shutil
 from pathlib import Path
 
 from solare.engine import JobRunner, RunPhase, TitleConfig
+from solare.engine.runner import RunState
 from solare.tui.state import ActiveChunkInfo, JobState
+
+# (low, high) percent band each phase occupies in the overall cross-phase progress bar - video
+# encode dominates real wall-clock time on every title tested so far (audio/mux/integrity are
+# each a small tail by comparison), hence the lopsided split. Not derived from measured timing
+# per title (that varies with track count etc.) - a fixed, honest-enough approximation so the bar
+# stops reading "100%" the moment av1an finishes when 3 more real phases remain.
+_PHASE_BANDS = {
+    RunPhase.VIDEO_ENCODE: (0.0, 90.0),
+    RunPhase.DOLBY_VISION: (90.0, 93.0),
+    RunPhase.AUDIO: (93.0, 97.0),
+    RunPhase.MUX: (97.0, 99.0),
+    RunPhase.INTEGRITY: (99.0, 100.0),
+}
+
+
+def _overall_pct(state: RunState) -> float:
+    if state.phase == RunPhase.DONE:
+        return 100.0
+    low, high = _PHASE_BANDS.get(state.phase, (0.0, 100.0))
+    if state.phase == RunPhase.VIDEO_ENCODE and state.frames_total:
+        sub_fraction = state.frames_done / state.frames_total
+    elif state.phase == RunPhase.AUDIO and state.audio_track_count:
+        sub_fraction = state.audio_track_index / state.audio_track_count
+    else:
+        # DOLBY_VISION/MUX/INTEGRITY have no finer sub-progress to track (each is one subprocess
+        # call with no natural midpoint) - landing in the phase's own band at all already says
+        # "further than the previous phase," which is the point.
+        sub_fraction = 0.0
+    return low + (high - low) * sub_fraction
 
 
 class LiveJobSource:
@@ -126,6 +156,7 @@ class LiveJobSource:
             active_chunks=active_chunks,
             waiting_for_solar=state.waiting_for_solar,
             solar_override=state.solar_override,
+            overall_pct=_overall_pct(state),
         )
 
 

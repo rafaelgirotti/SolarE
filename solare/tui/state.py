@@ -41,6 +41,8 @@ class JobState:
     active_chunks: list[ActiveChunkInfo]
     waiting_for_solar: bool
     solar_override: bool
+    overall_pct: float  # spans every phase (video encode + audio + mux + integrity), not just
+    # frames_done/frames_total - see live_job._overall_pct
 
 
 @dataclass

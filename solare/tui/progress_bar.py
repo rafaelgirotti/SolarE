@@ -58,8 +58,13 @@ class TextProgressBar(Static):
             in_label = label_start <= i < label_start + len(label)
             is_filled = i < filled_count
             if in_label:
-                bg = "#1a3a1a" if is_filled else "#000000"
-                text.append(label[i - label_start], style=f"bold {self._label_color} on {bg}")
+                # No background swap at the fill boundary - that read as the bar visually
+                # breaking into two disconnected boxes right where the label sits. A single
+                # implicit background (the widget's own, same as the rest of the app) plus a
+                # foreground-color change reads as one continuous bar with the label legible
+                # throughout, not a seam.
+                color = self._label_color if is_filled else self._empty_color
+                text.append(label[i - label_start], style=f"bold {color}")
             else:
                 char = _FILLED_CHAR if is_filled else _EMPTY_CHAR
                 color = self._filled_color if is_filled else self._empty_color

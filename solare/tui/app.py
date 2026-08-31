@@ -395,11 +395,18 @@ class SolarEApp(App):
             )
         self.query_one("#job_meta", Static).update(meta)
 
-        pct = 100.0 * job.frames_done / job.frames_total
-        bar = self.query_one("#chunks_bar", TextProgressBar)
-        bar.update_progress(
-            job.frames_done, job.frames_total, f"{job.frames_done}/{job.frames_total} frames - {pct:.1f}%"
+        # overall_pct spans every phase (video encode + audio + mux + integrity), not just
+        # frames_done/frames_total - a frame-only percentage hit 100% the moment av1an finished
+        # while 3 more real phases (each taking real time) were still ahead, confirmed live to
+        # read as "done" well before the job actually was. Frame counts stay in the label during
+        # video encoding specifically, since that detail is still meaningful there.
+        bar_label = (
+            f"{job.frames_done}/{job.frames_total} frames - {job.overall_pct:.1f}%"
+            if job.phase == "video encoding"
+            else f"{job.overall_pct:.1f}% - {job.phase}"
         )
+        bar = self.query_one("#chunks_bar", TextProgressBar)
+        bar.update_progress(job.overall_pct, 100.0, bar_label)
 
         disk_color = colors.falling_gradient(
             job.disk_free_gb, colors.DISK_FREE_WARN_GB, colors.DISK_FREE_DANGER_GB
