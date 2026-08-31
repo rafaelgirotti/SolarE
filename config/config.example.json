@@ -36,7 +36,11 @@
         "title": "Japanese",
         "language": "jpn",
         "default": true,
-        "mappingFamily": "1"
+        "mappingFamily": "1",
+        "downmixFilter": null,
+        "channelFix": null,
+        "sourceLanguage": null,
+        "languageIetf": null
       }
     ]
   },
@@ -44,8 +48,15 @@
     {
       "language": "eng",
       "title": "English",
-      "default": true
+      "default": true,
+      "source": "primary",
+      "externalPattern": null,
+      "excludeTitleMatch": null,
+      "matchTitle": null,
+      "codec": null,
+      "languageIetf": null
     }
   ],
+  "fontAttachDir": null,
   "solarGate": null
 }
