@@ -161,20 +161,18 @@ class SolarEApp(App):
         if self._solar_poller is not None:
             self._solar_poller.stop()
 
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
+    def on_button_pressed(self, event: Button.Pressed) -> None:
         # A modal screen's own button (e.g. ConfirmScreen's Yes/No) is expected to stop() its
         # Button.Pressed event before it bubbles this far - .get() instead of direct indexing is
         # just defense in depth against a future modal that forgets to, so one crashes the whole
         # app instead of silently doing nothing.
-        if event.button.id == "btn_exit":
-            await self.action_quit()  # async (waits for a running job to actually stop) -
-            return  # the other actions below are all plain sync calls, no await needed
         action = {
             "btn_choose": self.action_choose_config,
             "btn_start": self.action_start,
             "btn_pause": self.action_toggle_pause,
             "btn_stop": self.action_stop,
             "btn_solar_gate": self.action_toggle_solar_gate,
+            "btn_exit": self.action_quit,
         }.get(event.button.id)
         if action is not None:
             action()
@@ -238,17 +236,33 @@ class SolarEApp(App):
         self._phase = AppPhase.STOPPING
         self._update_controls()
 
-    async def action_quit(self) -> None:
+    def action_quit(self) -> None:
         """Overrides Textual's own default action_quit (bound to ctrl+q with priority=True by the
         base App class, confirmed via App.BINDINGS - so this is reached even if the user never
         touches the Exit button) - the stock implementation is just self.exit(), immediately,
         with zero regard for a real av1an subprocess that might be mid-encode. That would orphan
         it: the process keeps running with nothing left to pause/resume/suspend it or even show
-        its progress, since the dashboard that was tracking it is gone. Stop it and confirm it has
-        actually exited first, same STOPPING mechanism as the Stop button/action_stop - covers a
-        job already stopping too (e.g. Stop pressed, then Exit before it finished), not just one
-        just starting to stop here."""
-        if self._phase in (AppPhase.RUNNING, AppPhase.PAUSED):
+        its progress, since the dashboard that was tracking it is gone.
+
+        Delegates to a worker rather than doing this inline: push_screen_wait() (needed to await
+        the confirm dialog's result before deciding whether to proceed) requires a real Textual
+        worker context - confirmed live that even genuine action dispatch (a real keybinding
+        press, not just a hand-called coroutine) does NOT provide one on its own, only
+        run_worker() does."""
+        self.run_worker(self._quit_sequence(), exclusive=True)
+
+    async def _quit_sequence(self) -> None:
+        """Confirms first (a plain exit is hard to undo - the whole reason a job needs stopping
+        at all), then stops a running job and confirms it has actually exited before quitting,
+        same STOPPING mechanism as the Stop button/action_stop - covers a job already stopping
+        too (e.g. Stop pressed, then Exit before it finished), not just one just starting to stop
+        here."""
+        job_active = self._phase in (AppPhase.RUNNING, AppPhase.PAUSED)
+        message = "Quit SolarE?" + ("\n\nThis will stop the running job first." if job_active else "")
+        confirmed = await self.push_screen_wait(ConfirmScreen(message))
+        if not confirmed:
+            return
+        if job_active:
             self._job_source.stop()
             self._phase = AppPhase.STOPPING
             self._update_controls()
