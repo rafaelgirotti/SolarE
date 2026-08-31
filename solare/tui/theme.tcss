@@ -142,26 +142,13 @@ ConfirmScreen {
 #confirm_buttons Button {
     margin: 0 1;
     min-width: 12;
-    background: #000000;
-    color: #33cc33;
-    border: heavy #33cc33;
-}
-
-#confirm_buttons Button:hover {
-    background: #1a3a1a;
 }
 
 #confirm_buttons Button:focus {
-    /* Textual's own default Button:focus style applies a bold+reverse text-style (swaps fg/bg),
-    which turned this into a solid green block with black text - confirmed live, jarring against
-    every other flat black-background button in the app. Same subtle highlight as :hover instead,
-    no reverse. */
+    /* This is the one real bug in an otherwise-liked look: Textual's built-in Button:focus style
+    applies text-style: bold reverse (swaps fg/bg) on top of whatever variant coloring is already
+    there - on the "success" variant that reads as a stray dark band cutting through the green
+    button. Neutralizing just the reverse keeps the variant's own background/border/bevel exactly
+    as Textual renders it, which is the actual look wanted here. */
     text-style: bold;
-    background: #1a3a1a;
-    background-tint: transparent;
-}
-
-#confirm_buttons #confirm_yes {
-    color: #55ff55;
-    border: heavy #55ff55;
 }
