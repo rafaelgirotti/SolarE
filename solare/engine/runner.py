@@ -69,6 +69,9 @@ class RunState:
     solar_override: bool = False  # user toggled solar gating off for the rest of this run
     finalizing: bool = False  # every chunk done, av1an still running its own mkvmerge concat -
     # see JobRunner._wait_for_av1an
+    audio_track_index: int = 0  # 1-based "currently transcoding track N of M" - the only
+    audio_track_count: int = 0  # sub-progress available within the AUDIO phase (no per-track
+    # frame/byte-level progress tracking exists), used to compute the overall cross-phase percentage
     error: str | None = None
     log_lines: list[str] = field(default_factory=list)
     started_at: datetime.datetime = field(default_factory=datetime.datetime.now)
@@ -211,6 +214,8 @@ class JobRunner:
                 self._state.frames_total = 0
                 self._state.chunk_progress = None
                 self._state.finalizing = False
+                self._state.audio_track_index = 0
+                self._state.audio_track_count = 0
                 self._state.item_started_at = datetime.datetime.now()
                 self._state.item_paused_seconds = 0.0
             if item.already_done:
@@ -285,8 +290,11 @@ class JobRunner:
 
         with self._lock:
             self._state.phase = RunPhase.AUDIO
+            self._state.audio_track_count = len(self._config.audio_tracks)
         audio_files = []
         for t, track in enumerate(self._config.audio_tracks):
+            with self._lock:
+                self._state.audio_track_index = t
             self._log(f"transcoding audio track {t}: {track.title}")
             audio_out = item.out_file.parent / f"{item.out_file.stem}.audio{t}.tmp.mka"
             transcode_audio_track(
@@ -297,6 +305,8 @@ class JobRunner:
                 speed_correction=self._config.video.speed_correction,
             )
             audio_files.append(audio_out)
+        with self._lock:
+            self._state.audio_track_index = self._state.audio_track_count
         if self._stop.is_set():
             return
 
@@ -317,7 +327,11 @@ class JobRunner:
         with self._lock:
             self._state.phase = RunPhase.INTEGRITY
         result = check_output_integrity(
-            item.src_file, item.out_file, len(self._config.audio_tracks), len(self._config.subtitles)
+            item.src_file,
+            item.out_file,
+            len(self._config.audio_tracks),
+            len(self._config.subtitles),
+            speed_correction=self._config.video.speed_correction,
         )
         if not result.ok:
             item.out_file.rename(item.out_file.with_suffix(item.out_file.suffix + ".FAILED"))

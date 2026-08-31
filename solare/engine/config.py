@@ -43,9 +43,15 @@ class SpeedCorrection:
 
     @property
     def ratio(self) -> float:
-        """target/source - multiply a duration or sample rate by this to correct it. Below 1.0
-        means the source plays too fast and needs slowing down (and its audio pitch dropped to
-        match); above 1.0 is the reverse."""
+        """target/source - multiply a *sample rate* by this to correct it (see audio.py's
+        asetrate use). Below 1.0 means the source plays too fast and needs slowing down (and its
+        audio pitch dropped to match); above 1.0 is the reverse.
+
+        NOT the multiplier for a *duration* - slowing playback by `ratio` stretches duration by
+        its reciprocal (1/ratio), not by ratio itself. Confirmed live the hard way: integrity.py
+        originally multiplied a duration by this directly and flagged a genuinely-correct output
+        as a false-positive "duration mismatch" - use 1/ratio (or equivalently
+        source_fps/target_fps) wherever a duration is what's actually being corrected."""
         return _parse_fps_fraction(self.target_fps) / _parse_fps_fraction(self.source_fps)
 
 
