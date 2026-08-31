@@ -19,7 +19,12 @@ class ConfirmScreen(ModalScreen[bool]):
         with Vertical(id="confirm_dialog"):
             yield Static(self._message, id="confirm_message")
             with Horizontal(id="confirm_buttons"):
-                yield Button("Yes \\[Enter]", id="confirm_yes", variant="success")
+                # Deliberately no variant="success"/"error" - Textual's built-in variant palettes
+                # bring their own default border/background styling along with the color, which
+                # visibly clashed with this app's flat black-background button theme (a distinct,
+                # mismatched middle row behind the label). Plain buttons + this module's own CSS
+                # keeps them consistent with every other button in the app.
+                yield Button("Yes \\[Enter]", id="confirm_yes")
                 yield Button("No \\[Esc]", id="confirm_no")
 
     def on_mount(self) -> None:

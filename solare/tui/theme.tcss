@@ -142,4 +142,16 @@ ConfirmScreen {
 #confirm_buttons Button {
     margin: 0 1;
     min-width: 12;
+    background: #000000;
+    color: #33cc33;
+    border: heavy #33cc33;
+}
+
+#confirm_buttons Button:hover {
+    background: #1a3a1a;
+}
+
+#confirm_buttons #confirm_yes {
+    color: #55ff55;
+    border: heavy #55ff55;
 }
