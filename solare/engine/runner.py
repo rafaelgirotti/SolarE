@@ -67,6 +67,8 @@ class RunState:
     waiting_for_solar: bool = False  # blocking *before* av1an starts at all - distinct from
     # solar_paused (which suspends an av1an already running); see JobRunner._wait_for_solar_gate
     solar_override: bool = False  # user toggled solar gating off for the rest of this run
+    finalizing: bool = False  # every chunk done, av1an still running its own mkvmerge concat -
+    # see JobRunner._wait_for_av1an
     error: str | None = None
     log_lines: list[str] = field(default_factory=list)
     started_at: datetime.datetime = field(default_factory=datetime.datetime.now)
@@ -208,6 +210,7 @@ class JobRunner:
                 self._state.frames_done = 0
                 self._state.frames_total = 0
                 self._state.chunk_progress = None
+                self._state.finalizing = False
                 self._state.item_started_at = datetime.datetime.now()
                 self._state.item_paused_seconds = 0.0
             if item.already_done:
@@ -260,6 +263,7 @@ class JobRunner:
         with self._lock:
             self._state.chunk_progress = None
             self._state.solar_paused = False
+            self._state.finalizing = False
             self._maybe_close_pause_window_locked()
         if self._stop.is_set():
             return
@@ -351,6 +355,7 @@ class JobRunner:
             self._log("solar production confirmed - starting video encode")
 
     def _wait_for_av1an(self) -> int | None:
+        logged_finalizing = False
         while True:
             if self._stop.is_set():
                 self._av1an.terminate()
@@ -361,11 +366,27 @@ class JobRunner:
             chunk_progress = self._av1an.get_chunk_progress()
             if chunk_progress is not None:
                 self._log_newly_finished_chunks(chunk_progress)
+            # Every chunk done but av1an's own process hasn't exited yet means it's past
+            # per-chunk encoding and into its own final step (mkvmerge concatenation of every
+            # chunk into the single output file) - one that reports no progress of its own and,
+            # on a long file with many chunks, can take real, non-trivial time. Without this, the
+            # dashboard just freezes at "100%" with nothing to explain why nothing looks like
+            # it's still happening - confirmed live, looked indistinguishable from a genuine hang.
+            all_chunks_done = (
+                progress is not None and progress.total_frames > 0
+                and progress.done_frames >= progress.total_frames
+            )
+            no_active_chunks = chunk_progress is not None and not chunk_progress.active
+            finalizing = all_chunks_done and no_active_chunks
+            if finalizing and not logged_finalizing:
+                self._log("all chunks done - concatenating into the final file (mkvmerge)...")
+                logged_finalizing = True
             with self._lock:
                 if progress is not None:
                     self._state.frames_done = progress.done_frames
                     self._state.frames_total = progress.total_frames
                 self._state.chunk_progress = chunk_progress
+                self._state.finalizing = finalizing
             exit_code = self._av1an.poll()
             if exit_code is not None:
                 return exit_code

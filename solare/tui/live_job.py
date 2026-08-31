@@ -50,6 +50,12 @@ class LiveJobSource:
             eta_text = "paused"
         elif state.solar_paused:
             eta_text = "paused (waiting for sun)"
+        elif state.finalizing:
+            # Every chunk done but av1an hasn't exited yet - it's running its own mkvmerge
+            # concatenation pass, which reports no progress of its own. Without this the normal
+            # ETA branch below would show a stale "100% done" with nothing changing, confirmed
+            # live to look indistinguishable from a genuine hang on a long file with many chunks.
+            eta_text = "all chunks done - finalizing (concatenating into the output file)..."
         else:
             active_seconds = (
                 now - state.item_started_at
