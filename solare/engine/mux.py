@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from solare.engine.config import Subtitle, TitleConfig
-from solare.engine.ffprobe import find_stream_index
+from solare.engine.ffprobe import count_streams, find_stream_index
 from solare.engine.queue import clean_title
 
 
@@ -78,18 +78,34 @@ def mux_episode(
         else:
             args += ["-map", f"{external_input_idx[i]}:s:0"]
     args += ["-map_chapters", str(src_input_idx)]
+    # Carries over the source's own embedded attachments (fonts, almost always what these are on
+    # a BD/anime remux) - needed for styled ASS subtitles to render with their intended fonts
+    # instead of a fallback. "?" makes this an optional stream specifier - a no-op, not an error,
+    # on a source with zero attachments. Verified directly: mapped correctly against a real
+    # source with 12 font attachments. Separate from font_attach_dir below, which adds *new*
+    # fonts from an external directory (e.g. for an externally-sourced subtitle track) - the two
+    # are complementary, not overlapping.
+    args += ["-map", f"{src_input_idx}:t?"]
 
     if config.font_attach_dir:
         font_dir = Path(config.font_attach_dir)
         if font_dir.is_dir():
             font_files = sorted(p for p in font_dir.iterdir() if p.is_file())
+            # ffmpeg's -metadata:s:t:N addresses attachment-type OUTPUT streams by their overall
+            # relative index, not specifically among the ones -attach just added - confirmed
+            # live: with the source's own passed-through fonts absent from that count, the
+            # metadata landed on a passed-through stream instead of the new one, leaving the
+            # actually-new attachment with no mimetype and ffmpeg refusing to mux at all. Offset
+            # by however many attachment streams the source already has ahead of these.
+            attach_offset = count_streams(src_file, "t")
             for i, font_file in enumerate(font_files):
+                t_index = attach_offset + i
                 args += [
                     "-attach", str(font_file),
-                    f"-metadata:s:t:{i}", "mimetype=application/x-truetype-font",
+                    f"-metadata:s:t:{t_index}", "mimetype=application/x-truetype-font",
                 ]
 
-    args += ["-c:v", "copy", "-c:a", "copy", "-c:s", "copy"]
+    args += ["-c:v", "copy", "-c:a", "copy", "-c:s", "copy", "-c:t", "copy"]
 
     # Release-group metadata (a container/stream title inherited from the source) otherwise
     # passes straight through even though the video itself was fully re-encoded, not copied -
