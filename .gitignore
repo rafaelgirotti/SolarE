@@ -25,6 +25,11 @@ config/*.json
 # dropped in here can never accidentally end up staged.
 history/
 
+# Encoding-domain methodology/decisions/tool notes ported from the pre-solare pipeline (see
+# docs/private/README.md) - genuinely useful local reference, but the same "no encoding-domain
+# wisdom in the public docs" rule as history/ applies here too. Ignored wholesale like history/.
+docs/private/
+
 # Local encoder tool binaries (av1an's dependencies: ffmpeg, x265, SVT-AV1, MKVToolNix,
 # VapourSynth, dovi_tool) - never committed. Large, platform-specific, and often GPL-licensed;
 # redistributing them through this repo isn't appropriate. See README's Requirements section for
