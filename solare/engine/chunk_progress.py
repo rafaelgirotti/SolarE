@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import datetime
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 # Real example lines this matches:
@@ -23,7 +23,8 @@ _STARTED_RE = re.compile(
 )
 _FINISHED_RE = re.compile(
     r'^(?P<ts>\S+) DEBUG encode_chunk\{worker_id=(?P<worker>\d+)[^}]*chunk_index="(?P<chunk>\d+)"\}: '
-    r"av1an_core::broker: finished chunk \d+: \d+ frames, [\d.]+ fps, took (?P<secs>[\d.]+)s$"
+    r"av1an_core::broker: finished chunk \d+: (?P<frames>\d+) frames, (?P<fps>[\d.]+) fps, "
+    r"took (?P<secs>[\d.]+)s$"
 )
 
 _TAIL_BYTES = 1_000_000  # generous: at ~150 bytes/line, still covers hours of history per worker
@@ -44,9 +45,31 @@ class ActiveChunk:
 
 
 @dataclass
+class FinishedChunk:
+    """One completed-chunk broker line, enough to render a real, human-readable log entry from
+    av1an's own DEBUG output without surfacing the raw (noisy, per-worker, unfiltered) log tail
+    directly - see runner.py's use of this to feed the dashboard's log panel."""
+
+    worker_id: int
+    chunk_index: str
+    frames: int
+    fps: float
+    seconds: float
+    finished_at: datetime.datetime
+
+    @property
+    def key(self) -> tuple[str, str]:
+        """A stable dedup key for a caller that polls this repeatedly and only wants to react to
+        chunks it hasn't already seen - chunk_index alone can repeat once av1an starts a new
+        title/run, so it's paired with the parsed timestamp."""
+        return (self.chunk_index, self.finished_at.isoformat())
+
+
+@dataclass
 class ChunkProgress:
     active: list[ActiveChunk]
     recent_durations_seconds: list[float]
+    recent_finished: list[FinishedChunk] = field(default_factory=list)
 
     @property
     def avg_duration_seconds(self) -> float | None:
@@ -88,12 +111,24 @@ def parse_chunk_progress(log_path: Path, recent_count: int = 10) -> ChunkProgres
 
     active: dict[int, ActiveChunk] = {}
     durations: list[float] = []
+    finished: list[FinishedChunk] = []
 
     for line in raw.decode("utf-8", errors="replace").splitlines():
         m = _FINISHED_RE.match(line)
         if m:
-            active.pop(int(m.group("worker")), None)
+            worker = int(m.group("worker"))
+            active.pop(worker, None)
             durations.append(float(m.group("secs")))
+            finished.append(
+                FinishedChunk(
+                    worker_id=worker,
+                    chunk_index=m.group("chunk"),
+                    frames=int(m.group("frames")),
+                    fps=float(m.group("fps")),
+                    seconds=float(m.group("secs")),
+                    finished_at=datetime.datetime.fromisoformat(m.group("ts")),
+                )
+            )
             continue
         m = _STARTED_RE.match(line)
         if m:
@@ -108,4 +143,5 @@ def parse_chunk_progress(log_path: Path, recent_count: int = 10) -> ChunkProgres
     return ChunkProgress(
         active=sorted(active.values(), key=lambda c: c.worker_id),
         recent_durations_seconds=durations[-recent_count:],
+        recent_finished=finished[-recent_count:],
     )

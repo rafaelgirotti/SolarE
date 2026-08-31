@@ -66,6 +66,7 @@ class RunState:
     pause_started_at: datetime.datetime | None = None
     waiting_for_solar: bool = False  # blocking *before* av1an starts at all - distinct from
     # solar_paused (which suspends an av1an already running); see JobRunner._wait_for_solar_gate
+    solar_override: bool = False  # user toggled solar gating off for the rest of this run
     error: str | None = None
     log_lines: list[str] = field(default_factory=list)
     started_at: datetime.datetime = field(default_factory=datetime.datetime.now)
@@ -86,19 +87,35 @@ class JobRunner:
         self._av1an: Av1anRunner | None = None
         self._solar_poller = solar_poller
         self._pause_started_at: datetime.datetime | None = None
+        self._logged_chunk_keys: set[tuple[str, str]] = set()
         self._thread = threading.Thread(target=self._run, daemon=True)
 
     def start(self) -> None:
         self._thread.start()
 
-    def skip_solar_gate(self) -> None:
-        """Permanently disables solar gating (both the pre-start wait and the ongoing
-        auto-pause) for the rest of this run - not a one-time bypass of just the current wait,
-        since re-gating the moment production dips again would defeat the point of a deliberate
-        override."""
-        self._solar_override.set()
+    def is_running(self) -> bool:
+        """True until the background thread has actually returned - a real av1an subprocess kill
+        (see stop()) is not instant, so a caller that wants to know when a requested stop has
+        genuinely taken effect (not just been requested) should poll this rather than assume
+        stop() itself was synchronous."""
+        return self._thread.is_alive()
+
+    def is_stop_requested(self) -> bool:
+        return self._stop.is_set()
+
+    def set_solar_override(self, active: bool) -> None:
+        """Toggles solar gating off/back-on for the rest of this run. Turning it back on re-arms
+        the ongoing gate checked during video encoding (_update_solar_gate, next poll tick) but
+        does not retroactively re-block a pre-start wait that already finished while it was off -
+        only the currently-running encode's suspend behavior is affected either way."""
+        if active:
+            self._solar_override.set()
+        else:
+            self._solar_override.clear()
         with self._lock:
-            self._state.waiting_for_solar = False
+            self._state.solar_override = active
+            if active:
+                self._state.waiting_for_solar = False
 
     def pause(self) -> None:
         self._paused.set()
@@ -166,6 +183,21 @@ class JobRunner:
             self._state.log_lines.append(message)
             self._state.log_lines = self._state.log_lines[-200:]
 
+    def _log_newly_finished_chunks(self, chunk_progress: ChunkProgress) -> None:
+        """Feeds real per-chunk av1an output into the dashboard's log panel - a curated summary
+        of the completed-chunk broker lines already parsed for chunk_progress, not a raw tail of
+        av1an's own DEBUG log (which interleaves dozens of near-identical per-worker start/finish
+        lines a second and would just be noise). Deduplicated against self._logged_chunk_keys
+        since parse_chunk_progress re-parses the same tail window on every poll."""
+        for chunk in chunk_progress.recent_finished:
+            if chunk.key in self._logged_chunk_keys:
+                continue
+            self._logged_chunk_keys.add(chunk.key)
+            self._log(
+                f"chunk {chunk.chunk_index} done - {chunk.frames} frames in "
+                f"{chunk.seconds:.1f}s ({chunk.fps:.2f} fps)"
+            )
+
     def _run(self) -> None:
         for i, item in enumerate(self._queue):
             if self._stop.is_set():
@@ -189,6 +221,11 @@ class JobRunner:
                     self._state.error = str(e)
                 self._log(f"FAILED: {item.src_file.name}: {e}")
                 return
+            if self._stop.is_set():
+                # _run_item can return early (mid-item) once stopped rather than raising - without
+                # this check, stopping the *last* queued item fell straight through to the DONE
+                # branch below, showing a stopped job as finished successfully.
+                return
         with self._lock:
             self._state.phase = RunPhase.DONE
 
@@ -200,6 +237,7 @@ class JobRunner:
             else item.out_file.parent / f"{item.out_file.stem}.av1an-temp"
         )
         video_tmp = item.out_file.parent / f"{item.out_file.stem}.video.tmp.mkv"
+        self._logged_chunk_keys.clear()
 
         with self._lock:
             self._state.phase = RunPhase.VIDEO_ENCODE
@@ -238,6 +276,8 @@ class JobRunner:
             inject_rpu(current_video, Path(self._config.video.dovi_rpu), dv_out, temp_dir)
             current_video.unlink(missing_ok=True)
             current_video = dv_out
+        if self._stop.is_set():
+            return
 
         with self._lock:
             self._state.phase = RunPhase.AUDIO
@@ -253,6 +293,8 @@ class JobRunner:
                 speed_correction=self._config.video.speed_correction,
             )
             audio_files.append(audio_out)
+        if self._stop.is_set():
+            return
 
         with self._lock:
             self._state.phase = RunPhase.MUX
@@ -265,6 +307,8 @@ class JobRunner:
             audio_file.unlink(missing_ok=True)
         if temp_dir.exists():
             shutil.rmtree(temp_dir, ignore_errors=True)
+        if self._stop.is_set():
+            return
 
         with self._lock:
             self._state.phase = RunPhase.INTEGRITY
@@ -315,6 +359,8 @@ class JobRunner:
             self._av1an.set_suspended(self._paused.is_set() or self._solar_gated.is_set())
             progress = self._av1an.get_progress()
             chunk_progress = self._av1an.get_chunk_progress()
+            if chunk_progress is not None:
+                self._log_newly_finished_chunks(chunk_progress)
             with self._lock:
                 if progress is not None:
                     self._state.frames_done = progress.done_frames
