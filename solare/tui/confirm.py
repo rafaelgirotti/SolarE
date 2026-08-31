@@ -37,9 +37,9 @@ class ConfirmScreen(ModalScreen[bool]):
     def compose(self) -> ComposeResult:
         with Vertical(id="confirm_dialog"):
             yield Static(self._message, id="confirm_message")
-            with Horizontal(id="confirm_choices"):
-                yield _ChoiceLabel("Yes \\[Enter]", resume=True, id="confirm_yes")
-                yield _ChoiceLabel("No \\[Esc]", resume=False, id="confirm_no")
+            with Horizontal(id="confirm_hint"):
+                yield _ChoiceLabel("[b]Y[/b]es \\[Enter]     ", resume=True, id="confirm_yes")
+                yield _ChoiceLabel("[b]N[/b]o \\[Esc]", resume=False, id="confirm_no")
 
     def on_key(self, event) -> None:
         if event.key in ("y", "enter"):
