@@ -27,6 +27,22 @@ def needs_preprocessing(config: TitleConfig) -> bool:
     return config.video.deinterlace is not None or config.video.speed_correction is not None
 
 
+def _cache_kwarg(chunk_method: str, cache_dir: Path, src_file: Path) -> str:
+    """Keeps each source plugin's own index cache (av1an's chunking otherwise defaults to writing
+    it next to src_file - e.g. lsmash's <name>.lwi - littering the source folder) inside the same
+    output-side directory as everything else this run generates. Each plugin has a differently
+    named/shaped parameter for this - confirmed directly against each plugin's own real
+    .signature(), not guessed - though only lsmash's has been verified end to end against a real
+    index build; bestsource/ffms2 are implemented from their documented signatures."""
+    if chunk_method == "lsmash":
+        return f', cachedir=r"{cache_dir}"'
+    if chunk_method == "bestsource":
+        return f', cachepath=r"{cache_dir}"'
+    if chunk_method == "ffms2":
+        return f', cachefile=r"{cache_dir / (src_file.name + ".ffindex")}"'
+    return ""
+
+
 def generate_vpy(config: TitleConfig, src_file: Path, out_vpy: Path, chunk_method: str) -> Path:
     """Write a .vpy script that loads src_file through the same underlying VapourSynth source
     plugin the configured chunk method would otherwise use directly, then applies deinterlacing
@@ -40,7 +56,13 @@ def generate_vpy(config: TitleConfig, src_file: Path, out_vpy: Path, chunk_metho
         )
 
     video = config.video
-    lines = ["import vapoursynth as vs", "core = vs.core", "", f'clip = {loader}(r"{src_file}")']
+    cache_kwarg = _cache_kwarg(chunk_method, out_vpy.parent, src_file)
+    lines = [
+        "import vapoursynth as vs",
+        "core = vs.core",
+        "",
+        f'clip = {loader}(r"{src_file}"{cache_kwarg})',
+    ]
 
     if video.deinterlace is not None:
         d = video.deinterlace
