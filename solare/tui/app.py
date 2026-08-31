@@ -13,6 +13,7 @@ poller also drives JobRunner's solar-gated auto-pause, when a title config enabl
 from __future__ import annotations
 
 import argparse
+import asyncio
 import datetime
 from enum import Enum
 from pathlib import Path
@@ -65,6 +66,7 @@ class SolarEApp(App):
         ("p", "toggle_pause", "Pause/Resume"),
         ("t", "stop", "Stop"),
         ("g", "toggle_solar_gate", "Toggle solar gating"),
+        ("q", "quit", "Exit"),
     ]
 
     def __init__(self, config_path: str | Path | None = None, auto_start: bool = False) -> None:
@@ -108,6 +110,7 @@ class SolarEApp(App):
             yield Button("Pause \\[P]", id="btn_pause")
             yield Button("Stop \\[T]", id="btn_stop")
             yield Button("Solar Gating: ON \\[G]", id="btn_solar_gate")
+            yield Button("Exit \\[Q]", id="btn_exit")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -158,11 +161,14 @@ class SolarEApp(App):
         if self._solar_poller is not None:
             self._solar_poller.stop()
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
         # A modal screen's own button (e.g. ConfirmScreen's Yes/No) is expected to stop() its
         # Button.Pressed event before it bubbles this far - .get() instead of direct indexing is
         # just defense in depth against a future modal that forgets to, so one crashes the whole
         # app instead of silently doing nothing.
+        if event.button.id == "btn_exit":
+            await self.action_quit()  # async (waits for a running job to actually stop) -
+            return  # the other actions below are all plain sync calls, no await needed
         action = {
             "btn_choose": self.action_choose_config,
             "btn_start": self.action_start,
@@ -231,6 +237,26 @@ class SolarEApp(App):
         # finalizes the transition once self._job_source.is_alive() genuinely goes False.
         self._phase = AppPhase.STOPPING
         self._update_controls()
+
+    async def action_quit(self) -> None:
+        """Overrides Textual's own default action_quit (bound to ctrl+q with priority=True by the
+        base App class, confirmed via App.BINDINGS - so this is reached even if the user never
+        touches the Exit button) - the stock implementation is just self.exit(), immediately,
+        with zero regard for a real av1an subprocess that might be mid-encode. That would orphan
+        it: the process keeps running with nothing left to pause/resume/suspend it or even show
+        its progress, since the dashboard that was tracking it is gone. Stop it and confirm it has
+        actually exited first, same STOPPING mechanism as the Stop button/action_stop - covers a
+        job already stopping too (e.g. Stop pressed, then Exit before it finished), not just one
+        just starting to stop here."""
+        if self._phase in (AppPhase.RUNNING, AppPhase.PAUSED):
+            self._job_source.stop()
+            self._phase = AppPhase.STOPPING
+            self._update_controls()
+            self.notify("Exiting - stopping the running job first...")
+        if self._phase == AppPhase.STOPPING:
+            while self._job_source is not None and self._job_source.is_alive():
+                await asyncio.sleep(0.5)
+        self.exit()
 
     def action_toggle_solar_gate(self) -> None:
         if self._phase not in (AppPhase.RUNNING, AppPhase.PAUSED) or self._job_source is None:
