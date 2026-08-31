@@ -40,7 +40,8 @@
         "downmixFilter": null,
         "channelFix": null,
         "sourceLanguage": null,
-        "languageIetf": null
+        "languageIetf": null,
+        "codec": null
       }
     ]
   },

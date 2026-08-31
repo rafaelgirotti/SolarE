@@ -105,6 +105,10 @@ class AudioTrack:
     # -metadata keys, not one replacing the other. `language` (ISO 639-2, e.g. "por") is what
     # every player reads; this is only for players that use the newer element to distinguish
     # regional variants ISO 639-2 has no separate code for.
+    codec: str | None = None  # filter by codec_name (e.g. "dts") when a source has more than one
+    # track in the same language - without this, find_stream_index just returns the first
+    # language match in stream order, which only happens to pick the lossless track over a lossy
+    # duplicate/fallback of the same language if the source happens to order them that way.
 
 
 @dataclass
@@ -172,6 +176,7 @@ def _parse_audio_track(entry: dict) -> AudioTrack:
         channel_fix=entry.get("channelFix"),
         source_language=entry.get("sourceLanguage"),
         language_ietf=entry.get("languageIetf"),
+        codec=entry.get("codec"),
     )
 
 

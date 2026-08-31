@@ -26,7 +26,7 @@ def transcode_audio_track(
     out_file: Path,
     speed_correction: SpeedCorrection | None = None,
 ) -> None:
-    src_index = find_stream_index(src_file, "a", source_language)
+    src_index = find_stream_index(src_file, "a", source_language, codec=track.codec)
     if src_index < 0:
         raise ValueError(f"No audio stream matching language={source_language!r} in {src_file}")
 
