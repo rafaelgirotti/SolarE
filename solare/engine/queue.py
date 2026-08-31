@@ -91,3 +91,16 @@ def build_queue(config: TitleConfig) -> list[QueueItem]:
             "matching output, or fileMatchRegex matched nothing."
         )
     return items
+
+
+def has_unfinished_work(config: TitleConfig) -> bool:
+    """True only when the queue resolves cleanly and at least one matched source file's output
+    doesn't exist yet - used to decide whether a "resume last job?" startup prompt is worth
+    showing. Any ambiguous case (source folder since moved/deleted, or every file already done)
+    returns False rather than guessing - a false negative here just means no prompt, not an
+    incorrectly confident one."""
+    try:
+        items = build_queue(config)
+    except (FileNotFoundError, RuntimeError):
+        return False
+    return any(not item.already_done for item in items)

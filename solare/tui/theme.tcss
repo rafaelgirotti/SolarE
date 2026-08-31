@@ -112,3 +112,25 @@ ConfigPickerScreen {
     background: #000000;
     color: #33cc33;
 }
+
+ConfirmScreen {
+    align: center middle;
+}
+
+#confirm_dialog {
+    width: 60;
+    height: auto;
+    border: heavy #55ff55;
+    background: #000000;
+    padding: 1 2;
+}
+
+#confirm_message {
+    color: #55ff55;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#confirm_hint {
+    color: #33cc33;
+}

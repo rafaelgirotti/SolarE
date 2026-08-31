@@ -22,10 +22,18 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Footer, RichLog, Static
 
 from solare import platform as solare_platform
-from solare.engine import JobRunner, TitleConfig, load_config, prepend_local_tools_to_path
+from solare.engine import (
+    JobRunner,
+    TitleConfig,
+    has_unfinished_work,
+    load_config,
+    prepend_local_tools_to_path,
+)
 from solare.hwmonitor import HardwareMonitor, HardwareSnapshot
 from solare.solar import GrowattCredentials, SolarPoller
 from solare.tui import colors, links
+from solare.tui.confirm import ConfirmScreen
+from solare.tui.last_job import last_config_path, record_last_config
 from solare.tui.live_job import LiveJobSource
 from solare.tui.picker import ConfigPickerScreen
 from solare.tui.progress_bar import TextProgressBar
@@ -110,10 +118,36 @@ class SolarEApp(App):
             self._load_config(self._pending_config_path)
             if self._pending_auto_start and self._phase == AppPhase.LOADED:
                 self.action_start()
+        else:
+            self._maybe_prompt_resume_last_job()
 
         self._update_controls()
         self._refresh()
         self.set_interval(_REFRESH_INTERVAL_SECONDS, self._refresh)
+
+    def _maybe_prompt_resume_last_job(self) -> None:
+        """Only offered when solare was launched bare (no --config) - an explicit --config on the
+        command line already says what to load, so a resume prompt on top would just be a second,
+        conflicting suggestion. See solare.tui.last_job for what "last" means."""
+        path = last_config_path()
+        if path is None or not path.is_file():
+            return
+        try:
+            config = load_config(path)
+        except (OSError, KeyError, ValueError):
+            return
+        if not has_unfinished_work(config):
+            return
+
+        def on_answer(resume: bool | None) -> None:
+            if resume:
+                self._load_config(path)
+                self._update_controls()
+
+        self.push_screen(
+            ConfirmScreen(f"Resume last job?\n\n[b]{config.title}[/b]\n{config.settings_summary}"),
+            on_answer,
+        )
 
     def on_unmount(self) -> None:
         self._hw_monitor.close()
@@ -159,6 +193,7 @@ class SolarEApp(App):
             self.notify(f"Couldn't start: {e}", severity="error")
             return
         runner.start()
+        record_last_config(self._config.path)
         self._job_source = LiveJobSource(self._config, runner)
         self._rendered_log_count = 0
         self._solar_override_active = False

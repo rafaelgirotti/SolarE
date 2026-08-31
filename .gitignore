@@ -11,6 +11,9 @@ __pycache__/
 credentials.json
 .env
 
+# Last-started-job tracking (solare/tui/last_job.py) - a real, personal config file path.
+state.json
+
 # Per-title recipe configs - only the example template is ever committed.
 # Real configs carry the user's actual source/output file paths.
 config/*.json
