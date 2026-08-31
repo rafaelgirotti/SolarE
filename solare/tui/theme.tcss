@@ -151,6 +151,16 @@ ConfirmScreen {
     background: #1a3a1a;
 }
 
+#confirm_buttons Button:focus {
+    /* Textual's own default Button:focus style applies a bold+reverse text-style (swaps fg/bg),
+    which turned this into a solid green block with black text - confirmed live, jarring against
+    every other flat black-background button in the app. Same subtle highlight as :hover instead,
+    no reverse. */
+    text-style: bold;
+    background: #1a3a1a;
+    background-tint: transparent;
+}
+
 #confirm_buttons #confirm_yes {
     color: #55ff55;
     border: heavy #55ff55;
