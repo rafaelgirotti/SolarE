@@ -207,5 +207,25 @@ class Av1anRunner:
             self._suspended_pids.clear()
 
     def terminate(self) -> None:
-        if self._process is not None and self._process.poll() is None:
-            self._process.terminate()
+        """Kills av1an's entire process tree, not just av1an itself. subprocess.terminate() on
+        Windows is TerminateProcess() - an unconditional, immediate kill with no equivalent of
+        POSIX SIGTERM, so av1an gets zero chance to clean up its own children before dying.
+        Confirmed live: quitting the app left real x265/ffmpeg/vspipe chunk workers running,
+        orphaned, indefinitely. Also kills anything still tracked in _suspended_pids - a pid can
+        be a real, live, suspended process even when it's no longer reachable through
+        _process_tree_pids()'s live parent-chain walk (see set_suspended's own comment on why),
+        so relying on a fresh tree walk alone here would repeat that same gap."""
+        if self._process is None:
+            return
+        pids = set(self._process_tree_pids()) | self._suspended_pids
+        # Resume before killing - a stop can land while the tree is mid-suspend (solar gate or
+        # manual pause), and an already-suspended process is worth waking first rather than
+        # trusting kill() to tear it down cleanly from a frozen state on the first try.
+        for pid in pids:
+            solare_platform.resume_process(pid)
+        for pid in pids:
+            try:
+                psutil.Process(pid).kill()
+            except psutil.NoSuchProcess:
+                pass
+        self._suspended_pids.clear()
