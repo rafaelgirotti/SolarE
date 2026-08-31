@@ -56,3 +56,4 @@ class SolarState:
     total_kwh: float
     capacity_pct: float
     nominal_power_w: float
+    stale: bool = False  # last poll failed, showing a previously-cached reading instead

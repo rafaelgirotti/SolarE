@@ -20,6 +20,7 @@ from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.content import Content
 from textual.widgets import Button, Footer, RichLog, Static
 
 from solare import platform as solare_platform
@@ -47,6 +48,24 @@ _CREDENTIALS_PATH = Path(__file__).resolve().parents[2] / "credentials.json"
 
 def _label(text: str) -> str:
     return f"{text:<{_LABEL_WIDTH}}"
+
+
+def _safe(value: object) -> Content:
+    """Wraps free-form/external text (a filename, a config-authored title, an exception message)
+    as literal Content, never parsed as markup - confirmed live that a real subprocess error
+    message (a Python list-repr of an ffmpeg command line, itself containing brackets, quotes,
+    and `=` signs) crashes Textual's markup parser with a real MarkupError, and that
+    `textual.markup.escape()` does NOT reliably prevent this (its regex only escapes `[` followed
+    by an actual tag-like character - a `[` followed by a quote, as in a list repr, still trips
+    the tokenizer). The only fully robust fix is to never run text like this through the markup
+    parser at all. Use this for anything not a hardcoded literal in this file's own source."""
+    return Content(str(value))
+
+
+def _labeled(label: str, value: object) -> Content:
+    """A bold hardcoded label (safe as markup) followed by a value that may be free-form/external
+    (see _safe) - the label alone goes through Content.from_markup, the value never does."""
+    return Content.from_markup(f"[b]{_label(label)}[/b]") + _safe(value)
 
 
 class AppPhase(Enum):
@@ -334,31 +353,47 @@ class SolarEApp(App):
     def _render_job_idle(self) -> None:
         if self._config is not None:
             text = (
-                f"[b]{self._config.title}[/b] loaded - {self._config.settings_summary}\n"
-                "Press [b]S[/b] or click [b]Start[/b] below to begin."
+                _safe(self._config.title).stylize("bold")
+                + Content.from_markup(" loaded - ")
+                + _safe(self._config.settings_summary)
+                + Content.from_markup("\nPress [b]S[/b] or click [b]Start[/b] below to begin.")
             )
-            border_title = f" {self._config.title} "
+            border_title = Content(" ") + _safe(self._config.title) + Content(" ")
         else:
-            text = "No config loaded - press [b]C[/b] or click [b]Choose config[/b] below to pick one."
-            border_title = " SolarE "
+            text = Content.from_markup(
+                "No config loaded - press [b]C[/b] or click [b]Choose config[/b] below to pick one."
+            )
+            border_title = Content(" SolarE ")
         self.query_one("#job_meta", Static).update(text)
         self.query_one("#chunks_bar", TextProgressBar).update_progress(0, 1, "")
         self.query_one("#job_footer", Static).update("")
         self.query_one("#job_panel", Vertical).border_title = border_title
 
     def _render_job_panel(self, job: JobState) -> None:
+        # job.eta_text/batch_summary/title and any hyperlink display text are all free-form -
+        # eta_text in particular can be a raw subprocess exception message (a Python list-repr of
+        # a full ffmpeg command line) once a job fails, confirmed live to crash Textual's markup
+        # parser with a real MarkupError if concatenated into a plain f-string ever passed to
+        # Content.from_markup()/.update(). Built via Content concatenation instead (see _safe/
+        # _labeled) so free-form text is never parsed as markup, no matter what it contains.
         elapsed = datetime.datetime.now() - job.started_at
         now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        meta_lines = [
-            f"[b]{_label('Now')}[/b]{now}   [b]Elapsed[/b] {_format_timedelta(elapsed)}"
-            f"   [b]ETA[/b] {job.eta_text}",
-        ]
+        meta = (
+            _labeled("Now", now)
+            + Content.from_markup(f"   [b]Elapsed[/b] {_format_timedelta(elapsed)}   ")
+            + _labeled("ETA", job.eta_text)
+        )
         if job.batch_summary:
-            meta_lines.append(f"[b]{_label('Batch')}[/b]{job.batch_summary}")
+            meta = meta + Content("\n") + _labeled("Batch", job.batch_summary)
         if job.active_chunks:
-            meta_lines.append(f"[b]{_label('Chunks')}[/b]{self._format_active_chunks(job.active_chunks)}")
-        self.query_one("#job_meta", Static).update("\n".join(meta_lines))
+            meta = (
+                meta
+                + Content("\n")
+                + Content.from_markup(f"[b]{_label('Chunks')}[/b]")
+                + self._format_active_chunks(job.active_chunks)
+            )
+        self.query_one("#job_meta", Static).update(meta)
 
         pct = 100.0 * job.frames_done / job.frames_total
         bar = self.query_one("#chunks_bar", TextProgressBar)
@@ -372,29 +407,39 @@ class SolarEApp(App):
         completed_items = max(0, job.item_index - 1)
         config_link = links.hyperlink(Path(job.config_path).name, job.config_path)
         disk_path_link = links.hyperlink(links.shorten_path(job.output_path), job.output_path)
-        footer_lines = [
-            f"[b]{_label('Settings')}[/b]{job.settings_summary} - config: {config_link}",
-            f"[b]{_label('Disk')}[/b][{disk_color}]{job.disk_free_gb}GB free[/{disk_color}] on "
-            f"{disk_path_link}    [b]Output used[/b] {job.output_used_gb}GB "
-            f"({completed_items}/{job.item_count} items)",
-        ]
-        self.query_one("#job_footer", Static).update("\n".join(footer_lines))
+        footer = (
+            _labeled("Settings", job.settings_summary)
+            + Content.from_markup(" - config: ")
+            + config_link
+            + Content.from_markup(
+                f"\n[b]{_label('Disk')}[/b][{disk_color}]{job.disk_free_gb}GB free[/{disk_color}] on "
+            )
+            + disk_path_link
+            + Content.from_markup(
+                f"    [b]Output used[/b] {job.output_used_gb}GB "
+                f"({completed_items}/{job.item_count} items)"
+            )
+        )
+        self.query_one("#job_footer", Static).update(footer)
 
         # Deliberately just title + phase, no item-count/filename - those already show in the
         # footer (item count) and batch_summary (current filename, batches only), so the always-
         # visible title bar stays short and equally clean for a single-file title or a 24-item
         # batch, instead of growing with a raw scene-release filename or a redundant "(1/1)".
         panel = self.query_one("#job_panel", Vertical)
-        panel.border_title = f" {job.title} - {job.phase} "
+        panel.border_title = Content(" ") + _safe(job.title) + Content.from_markup(f" - {job.phase} ")
 
         if job.solar_override != self._solar_override_active:
             self._solar_override_active = job.solar_override
             self._update_controls()
 
-    def _format_active_chunks(self, active_chunks: list[ActiveChunkInfo]) -> str:
+    def _format_active_chunks(self, active_chunks: list[ActiveChunkInfo]) -> Content:
         """Per-worker in-progress chunk timing - flags a chunk running far past its recent peers'
         pace as possibly stuck, since a hung worker otherwise looks identical to a slow one until
-        someone happens to notice CPU usage has quietly dropped to near-zero."""
+        someone happens to notice CPU usage has quietly dropped to near-zero. Every field used
+        here is numeric or digit-constrained (chunk_index is regex-captured as \\d+ in
+        chunk_progress.py) - safe to build via Content.from_markup directly, unlike the rest of
+        this panel's free-form text."""
         parts = []
         for chunk in active_chunks:
             elapsed = _format_seconds(chunk.elapsed_seconds)
@@ -403,7 +448,7 @@ class SolarEApp(App):
             if chunk.stuck:
                 text = f"[{colors.DANGER}]{text} - POSSIBLY STUCK[/{colors.DANGER}]"
             parts.append(text)
-        return "    ".join(parts)
+        return Content.from_markup("    ".join(parts))
 
     def _render_hw_panel(self, hw: HardwareSnapshot) -> None:
         temp_color = colors.rising_gradient(
@@ -453,29 +498,29 @@ class SolarEApp(App):
             if summary.nominal_power_w
             else 0.0
         )
-        line = f"{summary.current_power_w:.0f} W (updated: {age_text})"
-        if error:
-            line += " [last poll failed, showing stale data]"
         return SolarState(
-            line=line,
+            line=f"{summary.current_power_w:.0f} W (updated: {age_text})",
             ok=summary.current_power_w > 0,
             today_kwh=summary.today_kwh,
             month_kwh=summary.month_kwh,
             total_kwh=summary.total_kwh,
             capacity_pct=capacity_pct,
             nominal_power_w=summary.nominal_power_w,
+            stale=bool(error),
         )
 
     def _render_solar_panel(self, solar: SolarState | None) -> None:
         panel = self.query_one("#solar_panel", Static)
         if solar is None:
             if self._solar_unavailable_reason is not None:
-                reason = self._solar_unavailable_reason
+                # A real exception message (Growatt API/credential-loading failure) - free-form,
+                # same category as job.eta_text above, so it goes through _safe() too.
+                reason = _safe(self._solar_unavailable_reason)
             elif self._solar_poller is None:
-                reason = "not configured - add credentials.json (see README)"
+                reason = Content("not configured - add credentials.json (see README)")
             else:
-                reason = "waiting for first Growatt poll..."
-            panel.update(f"[{colors.UNKNOWN}]{reason}[/{colors.UNKNOWN}]")
+                reason = Content("waiting for first Growatt poll...")
+            panel.update(reason.stylize(colors.UNKNOWN))
             return
 
         # Producing-or-not is a status, not a risk gradient - reusing SAFE/WARN/DANGER here would
@@ -486,14 +531,26 @@ class SolarEApp(App):
         # "risk level" everywhere else on the dashboard.
         color = colors.PHOSPHOR if solar.ok else colors.UNKNOWN
         rated_kw = solar.nominal_power_w / 1000.0
-        lines = [
+        content = Content.from_markup(
             f"[b]{_label('Generation')}[/b][{color}]{solar.line}[/{color}] "
-            f"({solar.capacity_pct}% of {rated_kw:.1f}kW rated capacity)",
-            f"[b]{_label('Today')}[/b]{solar.today_kwh} kWh    "
+            f"({solar.capacity_pct}% of {rated_kw:.1f}kW rated capacity)"
+        )
+        if solar.stale:
+            # A hardcoded literal, but still not safe to splice into an f-string bound for
+            # Content.from_markup() - it starts with "[l", which the tokenizer treats as a
+            # tag-open attempt the same way a real bracket-heavy value would. _safe() sidesteps
+            # that the same way it does for genuinely free-form text; .stylize() applies the
+            # warn color directly instead of needing a markup open/close pair (which can't span
+            # across concatenated Content objects - each from_markup() call must be self-balanced).
+            content = content + Content(" ") + _safe("[last poll failed, showing stale data]").stylize(
+                colors.WARN
+            )
+        content = content + Content.from_markup(
+            f"\n[b]{_label('Today')}[/b]{solar.today_kwh} kWh    "
             f"[b]Month[/b] {solar.month_kwh} kWh    "
-            f"[b]Total[/b] {solar.total_kwh:,.0f} kWh",
-        ]
-        self.query_one("#solar_panel", Static).update("\n".join(lines))
+            f"[b]Total[/b] {solar.total_kwh:,.0f} kWh"
+        )
+        self.query_one("#solar_panel", Static).update(content)
 
     def _render_log_panel(self, log_lines: list[str]) -> None:
         log = self.query_one("#log_panel", RichLog)
