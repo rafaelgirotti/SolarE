@@ -99,14 +99,15 @@ class SolarEApp(App):
         yield Static(id="solar_panel")
         yield RichLog(id="log_panel", max_lines=500, wrap=False, highlight=False)
         with Horizontal(id="controls"):
-            # variant="success" - same embossed/3D Textual button look already used for the
-            # confirm dialog's Yes button (see solare/tui/confirm.py), not the flat
-            # black-background style these used before.
-            yield Button("Choose config \\[C]", id="btn_choose", variant="success")
-            yield Button("Start \\[S]", id="btn_start", variant="success")
-            yield Button("Pause \\[P]", id="btn_pause", variant="success")
-            yield Button("Stop \\[T]", id="btn_stop", variant="success")
-            yield Button("Solar Gating: ON \\[G]", id="btn_solar_gate", variant="success")
+            # Same embossed/3D Textual button look as the confirm dialog (see
+            # solare/tui/confirm.py) - default (muted, matching No) at rest, variant="success"
+            # applied dynamically in _update_controls() to whichever one is the current primary
+            # action, same "one green choice, the rest muted" pattern as Yes/No there.
+            yield Button("Choose config \\[C]", id="btn_choose")
+            yield Button("Start \\[S]", id="btn_start")
+            yield Button("Pause \\[P]", id="btn_pause")
+            yield Button("Stop \\[T]", id="btn_stop")
+            yield Button("Solar Gating: ON \\[G]", id="btn_solar_gate")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -239,15 +240,26 @@ class SolarEApp(App):
         self._update_controls()
 
     def _update_controls(self) -> None:
-        self.query_one("#btn_choose", Button).disabled = self._phase in (
+        # Only the current primary/next-step action gets variant="success" (green) - same
+        # one-highlighted-choice-the-rest-muted pattern as the confirm dialog's Yes/No, rather
+        # than every button rendering green regardless of relevance.
+        choose_btn = self.query_one("#btn_choose", Button)
+        choose_btn.disabled = self._phase in (
             AppPhase.RUNNING,
             AppPhase.PAUSED,
             AppPhase.STOPPING,
         )
-        self.query_one("#btn_start", Button).disabled = self._phase != AppPhase.LOADED
+        choose_btn.variant = "success" if self._phase == AppPhase.IDLE else "default"
+
+        start_btn = self.query_one("#btn_start", Button)
+        start_btn.disabled = self._phase != AppPhase.LOADED
+        start_btn.variant = "success" if self._phase == AppPhase.LOADED else "default"
+
         pause_btn = self.query_one("#btn_pause", Button)
         pause_btn.disabled = self._phase not in (AppPhase.RUNNING, AppPhase.PAUSED)
         pause_btn.label = "Resume \\[P]" if self._phase == AppPhase.PAUSED else "Pause \\[P]"
+        pause_btn.variant = "success" if self._phase in (AppPhase.RUNNING, AppPhase.PAUSED) else "default"
+
         self.query_one("#btn_stop", Button).disabled = self._phase not in (
             AppPhase.RUNNING,
             AppPhase.PAUSED,
