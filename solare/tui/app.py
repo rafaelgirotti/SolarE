@@ -468,16 +468,30 @@ class SolarEApp(App):
             f"[b]{_label('CPU')}[/b]{hw.cpu_total_load_pct}% total, {hw.cpu_max_core_load_pct}% "
             f"max core, temp {temp}, power {power}",
         ]
-        if hw.gpu_load_pct is not None:
+        gpu_fields = (hw.gpu_temp_c, hw.gpu_load_pct, hw.gpu_power_w, hw.gpu_mem_used_mb, hw.gpu_mem_total_mb)
+        if any(v is not None for v in gpu_fields):
+            # Each NVML call is independent and can fail on its own (confirmed live: a GPU driver
+            # update mid-poll made nvmlDeviceGetMemoryInfo throw while temp/load/power - read
+            # earlier in the same call - had already succeeded) - monitor.py's single try/except
+            # around all of them means any subset can come back None while the rest are real
+            # values, so each field here needs its own "n/a" fallback rather than assuming the
+            # whole GPU is either fully present or fully absent.
             gpu_temp_color = colors.rising_gradient(
                 hw.gpu_temp_c, colors.GPU_TEMP_WARN_C, colors.GPU_TEMP_DANGER_C
             )
-            gpu_mem_used_gb = hw.gpu_mem_used_mb / 1024
-            gpu_mem_total_gb = hw.gpu_mem_total_mb / 1024
+            gpu_load = f"{hw.gpu_load_pct}% load" if hw.gpu_load_pct is not None else "load n/a"
+            gpu_temp = (
+                f"[{gpu_temp_color}]{hw.gpu_temp_c}C[/{gpu_temp_color}]"
+                if hw.gpu_temp_c is not None
+                else "n/a"
+            )
+            gpu_power = f"{hw.gpu_power_w}W" if hw.gpu_power_w is not None else "n/a"
+            if hw.gpu_mem_used_mb is not None and hw.gpu_mem_total_mb is not None:
+                gpu_mem = f"{hw.gpu_mem_used_mb / 1024:.1f}/{hw.gpu_mem_total_mb / 1024:.1f} GB"
+            else:
+                gpu_mem = "n/a"
             lines.append(
-                f"[b]{_label('GPU')}[/b]{hw.gpu_load_pct}% load, "
-                f"[{gpu_temp_color}]{hw.gpu_temp_c}C[/{gpu_temp_color}], "
-                f"{hw.gpu_power_w}W, {gpu_mem_used_gb:.1f}/{gpu_mem_total_gb:.1f} GB"
+                f"[b]{_label('GPU')}[/b]{gpu_load}, temp {gpu_temp}, {gpu_power}, {gpu_mem}"
             )
         else:
             lines.append(f"[b]{_label('GPU')}[/b]n/a (no NVIDIA GPU detected, or the gpu extra isn't installed)")
