@@ -23,12 +23,20 @@ class TextProgressBar(Static):
         filled_color: str,
         empty_color: str,
         label_color: str,
+        empty_label_color: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self._filled_color = filled_color
         self._empty_color = empty_color
         self._label_color = label_color
+        # Deliberately a separate color from empty_color, not a reuse of it - empty_color is
+        # tuned to look right as a *solid block glyph* (any darkness reads fine there, since the
+        # glyph itself still fills the cell), but the same shade applied to thin text strokes
+        # was nearly invisible against the widget's black background - confirmed live, read as a
+        # blank gap in the middle of the bar rather than dim, legible text. Needs its own,
+        # visibly brighter color instead of inheriting empty_color's.
+        self._empty_label_color = empty_label_color or empty_color
         self._progress = 0.0
         self._total = 1.0
         self._label = ""
@@ -63,7 +71,7 @@ class TextProgressBar(Static):
                 # implicit background (the widget's own, same as the rest of the app) plus a
                 # foreground-color change reads as one continuous bar with the label legible
                 # throughout, not a seam.
-                color = self._label_color if is_filled else self._empty_color
+                color = self._label_color if is_filled else self._empty_label_color
                 text.append(label[i - label_start], style=f"bold {color}")
             else:
                 char = _FILLED_CHAR if is_filled else _EMPTY_CHAR

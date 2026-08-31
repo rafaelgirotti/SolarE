@@ -114,6 +114,7 @@ class SolarEApp(App):
                 filled_color=colors.SAFE,
                 empty_color="#1a3a1a",
                 label_color=colors.PHOSPHOR,
+                empty_label_color=colors.UNKNOWN,
             )
             yield Static(id="job_footer")
         yield Static(id="hw_panel")
