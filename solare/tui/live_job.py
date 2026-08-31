@@ -24,8 +24,11 @@ class LiveJobSource:
     def stop(self) -> None:
         self._runner.stop()
 
-    def skip_solar_gate(self) -> None:
-        self._runner.skip_solar_gate()
+    def is_alive(self) -> bool:
+        return self._runner.is_running()
+
+    def set_solar_override(self, active: bool) -> None:
+        self._runner.set_solar_override(active)
 
     @property
     def log_lines(self) -> list[str]:
@@ -39,6 +42,8 @@ class LiveJobSource:
             eta_text = f"FAILED - {state.error}"
         elif state.phase == RunPhase.DONE:
             eta_text = "done"
+        elif self._runner.is_stop_requested():
+            eta_text = "stopping - waiting for av1an to exit..."
         elif state.waiting_for_solar:
             eta_text = "waiting for solar production to start"
         elif state.paused:
@@ -114,6 +119,7 @@ class LiveJobSource:
             started_at=state.started_at,
             active_chunks=active_chunks,
             waiting_for_solar=state.waiting_for_solar,
+            solar_override=state.solar_override,
         )
 
 

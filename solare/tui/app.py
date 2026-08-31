@@ -45,6 +45,7 @@ class AppPhase(Enum):
     LOADED = "loaded"  # config loaded, job not started
     RUNNING = "running"
     PAUSED = "paused"
+    STOPPING = "stopping"  # stop() requested but the background thread/av1an haven't exited yet
 
 
 class SolarEApp(App):
@@ -55,7 +56,7 @@ class SolarEApp(App):
         ("s", "start", "Start"),
         ("p", "toggle_pause", "Pause/Resume"),
         ("t", "stop", "Stop"),
-        ("g", "skip_solar", "Skip solar wait"),
+        ("g", "toggle_solar_gate", "Toggle solar gating"),
     ]
 
     def __init__(self, config_path: str | Path | None = None, auto_start: bool = False) -> None:
@@ -67,6 +68,7 @@ class SolarEApp(App):
         self._pending_config_path = config_path
         self._pending_auto_start = auto_start
         self._rendered_log_count = 0
+        self._solar_override_active = False  # mirrors the real JobRunner state - see _render_job_panel
         self._solar_poller: SolarPoller | None = None
         self._solar_unavailable_reason: str | None = None
         if _CREDENTIALS_PATH.is_file():
@@ -89,11 +91,11 @@ class SolarEApp(App):
         yield Static(id="solar_panel")
         yield RichLog(id="log_panel", max_lines=500, wrap=False, highlight=False)
         with Horizontal(id="controls"):
-            yield Button("Choose config [C]", id="btn_choose")
-            yield Button("Start [S]", id="btn_start")
-            yield Button("Pause [P]", id="btn_pause")
-            yield Button("Stop [T]", id="btn_stop")
-            yield Button("Skip solar wait [G]", id="btn_skip_solar")
+            yield Button("Choose config \\[C]", id="btn_choose")
+            yield Button("Start \\[S]", id="btn_start")
+            yield Button("Pause \\[P]", id="btn_pause")
+            yield Button("Stop \\[T]", id="btn_stop")
+            yield Button("Solar Gating: ON \\[G]", id="btn_solar_gate")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -124,7 +126,7 @@ class SolarEApp(App):
             "btn_start": self.action_start,
             "btn_pause": self.action_toggle_pause,
             "btn_stop": self.action_stop,
-            "btn_skip_solar": self.action_skip_solar,
+            "btn_solar_gate": self.action_toggle_solar_gate,
         }[event.button.id]()
 
     def action_choose_config(self) -> None:
@@ -159,6 +161,7 @@ class SolarEApp(App):
         runner.start()
         self._job_source = LiveJobSource(self._config, runner)
         self._rendered_log_count = 0
+        self._solar_override_active = False
         self._phase = AppPhase.RUNNING
         self._update_controls()
 
@@ -177,25 +180,30 @@ class SolarEApp(App):
         if self._phase not in (AppPhase.RUNNING, AppPhase.PAUSED):
             return
         self._job_source.stop()
-        self._job_source = None
-        self._rendered_log_count = 0
-        self._phase = AppPhase.LOADED
+        # Don't clear job_source / drop to LOADED yet - a real av1an kill isn't instant (worker
+        # processes need to actually exit), and doing so here made the dashboard claim "stopped"
+        # and offer Start again while av1an was still very much alive in the background. _refresh
+        # finalizes the transition once self._job_source.is_alive() genuinely goes False.
+        self._phase = AppPhase.STOPPING
         self._update_controls()
 
-    def action_skip_solar(self) -> None:
+    def action_toggle_solar_gate(self) -> None:
         if self._phase not in (AppPhase.RUNNING, AppPhase.PAUSED) or self._job_source is None:
             return
-        self._job_source.skip_solar_gate()
+        self._solar_override_active = not self._solar_override_active
+        self._job_source.set_solar_override(self._solar_override_active)
+        self._update_controls()
 
     def _update_controls(self) -> None:
         self.query_one("#btn_choose", Button).disabled = self._phase in (
             AppPhase.RUNNING,
             AppPhase.PAUSED,
+            AppPhase.STOPPING,
         )
         self.query_one("#btn_start", Button).disabled = self._phase != AppPhase.LOADED
         pause_btn = self.query_one("#btn_pause", Button)
         pause_btn.disabled = self._phase not in (AppPhase.RUNNING, AppPhase.PAUSED)
-        pause_btn.label = "Resume [P]" if self._phase == AppPhase.PAUSED else "Pause [P]"
+        pause_btn.label = "Resume \\[P]" if self._phase == AppPhase.PAUSED else "Pause \\[P]"
         self.query_one("#btn_stop", Button).disabled = self._phase not in (
             AppPhase.RUNNING,
             AppPhase.PAUSED,
@@ -205,8 +213,12 @@ class SolarEApp(App):
             and self._config.solar_gate is not None
             and self._config.solar_gate.enabled
         )
-        self.query_one("#btn_skip_solar", Button).disabled = not (
+        solar_btn = self.query_one("#btn_solar_gate", Button)
+        solar_btn.disabled = not (
             gate_configured and self._phase in (AppPhase.RUNNING, AppPhase.PAUSED)
+        )
+        solar_btn.label = (
+            "Solar Gating: OFF \\[G]" if self._solar_override_active else "Solar Gating: ON \\[G]"
         )
 
     def _refresh(self) -> None:
@@ -215,6 +227,11 @@ class SolarEApp(App):
         if self._job_source is not None:
             self._render_job_panel(self._job_source.poll_job())
             self._render_log_panel(self._job_source.log_lines)
+            if self._phase == AppPhase.STOPPING and not self._job_source.is_alive():
+                self._job_source = None
+                self._rendered_log_count = 0
+                self._phase = AppPhase.LOADED
+                self._update_controls()
         else:
             self._render_job_idle()
 
@@ -273,6 +290,10 @@ class SolarEApp(App):
         # batch, instead of growing with a raw scene-release filename or a redundant "(1/1)".
         panel = self.query_one("#job_panel", Vertical)
         panel.border_title = f" {job.title} - {job.phase} "
+
+        if job.solar_override != self._solar_override_active:
+            self._solar_override_active = job.solar_override
+            self._update_controls()
 
     def _format_active_chunks(self, active_chunks: list[ActiveChunkInfo]) -> str:
         """Per-worker in-progress chunk timing - flags a chunk running far past its recent peers'

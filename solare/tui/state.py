@@ -40,6 +40,7 @@ class JobState:
     started_at: datetime.datetime
     active_chunks: list[ActiveChunkInfo]
     waiting_for_solar: bool
+    solar_override: bool
 
 
 @dataclass
