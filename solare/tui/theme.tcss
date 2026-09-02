@@ -58,6 +58,16 @@ Screen {
     padding: 0 1;
     height: 1fr;
     scrollbar-size-vertical: 1;
+    /* Textual's own defaults are bright magenta-on-gray - clashes hard against this theme's
+    dim monochrome green/black, which is most of why the scrollbars read as "too big": a
+    same-thickness bar in a jarring, unrelated color draws far more attention than one that
+    blends into the panel it's attached to. */
+    scrollbar-color: #33cc33;
+    scrollbar-color-hover: #55ff55;
+    scrollbar-color-active: #55ff55;
+    scrollbar-background: #000000;
+    scrollbar-background-hover: #001a00;
+    scrollbar-background-active: #001a00;
 }
 
 Footer {
