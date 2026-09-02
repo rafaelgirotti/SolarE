@@ -395,7 +395,6 @@ class JobRunner:
                 self._av1an.terminate()
                 return None
             self._update_solar_gate()
-            self._av1an.set_suspended(self._paused.is_set() or self._solar_gated.is_set())
             progress = self._av1an.get_progress()
             chunk_progress = self._av1an.get_chunk_progress()
             if chunk_progress is not None:
@@ -415,6 +414,14 @@ class JobRunner:
             if finalizing and not logged_finalizing:
                 self._log("all chunks done - concatenating into the final file (mkvmerge)...")
                 logged_finalizing = True
+            # Solar gating exists to defer real CPU draw, not to stall a nearly-finished item on
+            # a disk-bound mkvmerge pass with no meaningful power cost - once finalizing, the gate
+            # stops applying (a real user complaint: a whole night's wait to finish a sub-minute
+            # merge). Manual pause is left alone here - that's a deliberate user action, not an
+            # automatic policy, so it keeps suspending through finalizing same as before.
+            self._av1an.set_suspended(
+                self._paused.is_set() or (self._solar_gated.is_set() and not finalizing)
+            )
             with self._lock:
                 if progress is not None:
                     self._state.frames_done = progress.done_frames
