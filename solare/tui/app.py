@@ -128,7 +128,15 @@ class SolarEApp(App):
             yield Static(id="job_footer")
         yield Static(id="hw_panel")
         yield Static(id="solar_panel")
-        yield RichLog(id="log_panel", max_lines=500, wrap=False, highlight=False)
+        # wrap=True (not the default False) - a real log line's full text (a scene-release
+        # filename with every audio track spelled out) is routinely wider than the panel, and
+        # wrap=False turns that into a horizontal scrollbar whose thumb is nearly always near
+        # full-width - looks chunky no matter how thin scrollbar-size-horizontal is set (a
+        # terminal cell is taller than it is wide, so a 1-row scrollbar reads thicker than a
+        # 1-column one regardless), and needs manual horizontal scrolling to read a cut-off line
+        # at all. Wrapping trades fewer visible log entries per screen for no scrollbar and every
+        # line fully readable without scrolling - the better trade for a log meant to be scanned.
+        yield RichLog(id="log_panel", max_lines=500, wrap=True, highlight=False)
         yield Footer()
 
     def on_mount(self) -> None:
