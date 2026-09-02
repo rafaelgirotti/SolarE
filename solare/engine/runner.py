@@ -77,6 +77,10 @@ class RunState:
     started_at: datetime.datetime = field(default_factory=datetime.datetime.now)
     item_started_at: datetime.datetime = field(default_factory=datetime.datetime.now)
     item_paused_seconds: float = 0.0
+    # Active (paused-time-excluded) wall-clock seconds for each item actually encoded this run -
+    # not skipped ones (already_done items take ~0 real time and would skew the average sharply
+    # downward). Batch ETA is average-of-these times remaining items - see live_job._batch_eta_text.
+    completed_item_seconds: list[float] = field(default_factory=list)
 
 
 class JobRunner:
@@ -234,6 +238,11 @@ class JobRunner:
                 # this check, stopping the *last* queued item fell straight through to the DONE
                 # branch below, showing a stopped job as finished successfully.
                 return
+            with self._lock:
+                active_seconds = (
+                    datetime.datetime.now() - self._state.item_started_at
+                ).total_seconds() - self._state.item_paused_seconds
+                self._state.completed_item_seconds.append(max(0.0, active_seconds))
         with self._lock:
             self._state.phase = RunPhase.DONE
 

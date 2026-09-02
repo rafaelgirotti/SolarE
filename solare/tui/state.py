@@ -34,6 +34,8 @@ class JobState:
     config_path: str
     eta_text: str
     batch_summary: str | None
+    batch_eta_text: str | None  # whole-batch ETA, from the average of already-completed items'
+    # real encode time - see live_job._batch_eta_text. None until at least one item has finished.
     output_path: str
     disk_free_gb: float
     output_used_gb: float

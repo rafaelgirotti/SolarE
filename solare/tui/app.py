@@ -387,6 +387,8 @@ class SolarEApp(App):
         )
         if job.batch_summary:
             meta = meta + Content("\n") + _labeled("Batch", job.batch_summary)
+            if job.batch_eta_text:
+                meta = meta + Content("   ") + _labeled("Batch ETA", job.batch_eta_text)
         if job.active_chunks:
             meta = (
                 meta

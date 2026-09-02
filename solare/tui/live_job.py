@@ -40,6 +40,24 @@ def _overall_pct(state: RunState) -> float:
     return low + (high - low) * sub_fraction
 
 
+def _batch_eta_text(state: RunState, now: datetime.datetime) -> str | None:
+    """Average real (paused-time-excluded) duration of items already encoded this run, times
+    items still ahead - a rough per-item pace, not aware of per-title duration variance (a batch
+    mixing long movies and short specials would skew this), but still far better than no signal
+    at all for "when does the whole batch finish," which nothing previously answered. None before
+    the first item finishes (nothing to average yet) or for a single-item run (no "batch" to have
+    an ETA distinct from the item's own)."""
+    if state.item_count <= 1 or not state.completed_item_seconds:
+        return None
+    avg_seconds = sum(state.completed_item_seconds) / len(state.completed_item_seconds)
+    items_remaining = state.item_count - state.item_index + 1
+    if items_remaining <= 0:
+        return None
+    remaining_seconds = avg_seconds * items_remaining
+    eta_time = now + datetime.timedelta(seconds=remaining_seconds)
+    return f"{eta_time.strftime('%H:%M')} (in {_format_hours_minutes(remaining_seconds)})"
+
+
 class LiveJobSource:
     def __init__(self, config: TitleConfig, runner: JobRunner) -> None:
         self._config = config
@@ -109,6 +127,7 @@ class LiveJobSource:
                 f"{state.item_index}/{state.item_count} items ({completed} completed) - "
                 f"current: {state.current_item_name}"
             )
+        batch_eta_text = _batch_eta_text(state, now)
 
         output_root = Path(self._config.output_root)
         disk_check_path = output_root if output_root.exists() else self._config.path.parent
@@ -149,6 +168,7 @@ class LiveJobSource:
             config_path=str(self._config.path.resolve()),
             eta_text=eta_text,
             batch_summary=batch_summary,
+            batch_eta_text=batch_eta_text,
             output_path=str(disk_check_path),
             disk_free_gb=round(disk_usage.free / (1024**3), 1),
             output_used_gb=_sum_output_size_gb(output_root),
