@@ -19,9 +19,9 @@ from enum import Enum
 from pathlib import Path
 
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Vertical
 from textual.content import Content
-from textual.widgets import Button, Footer, RichLog, Static
+from textual.widgets import Footer, RichLog, Static
 
 from solare import platform as solare_platform
 from solare.engine import (
@@ -129,17 +129,6 @@ class SolarEApp(App):
         yield Static(id="hw_panel")
         yield Static(id="solar_panel")
         yield RichLog(id="log_panel", max_lines=500, wrap=False, highlight=False)
-        with Horizontal(id="controls"):
-            # Same embossed/3D Textual button look as the confirm dialog (see
-            # solare/tui/confirm.py) - default (muted, matching No) at rest, variant="success"
-            # applied dynamically in _update_controls() to whichever one is the current primary
-            # action, same "one green choice, the rest muted" pattern as Yes/No there.
-            yield Button("Choose config \\[C]", id="btn_choose")
-            yield Button("Start \\[S]", id="btn_start")
-            yield Button("Pause \\[P]", id="btn_pause")
-            yield Button("Stop \\[T]", id="btn_stop")
-            yield Button("Solar Gating: ON \\[G]", id="btn_solar_gate")
-            yield Button("Exit \\[Q]", id="btn_exit")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -191,22 +180,6 @@ class SolarEApp(App):
         self._hw_monitor.close()
         if self._solar_poller is not None:
             self._solar_poller.stop()
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        # A modal screen's own button (e.g. ConfirmScreen's Yes/No) is expected to stop() its
-        # Button.Pressed event before it bubbles this far - .get() instead of direct indexing is
-        # just defense in depth against a future modal that forgets to, so one crashes the whole
-        # app instead of silently doing nothing.
-        action = {
-            "btn_choose": self.action_choose_config,
-            "btn_start": self.action_start,
-            "btn_pause": self.action_toggle_pause,
-            "btn_stop": self.action_stop,
-            "btn_solar_gate": self.action_toggle_solar_gate,
-            "btn_exit": self.action_quit,
-        }.get(event.button.id)
-        if action is not None:
-            action()
 
     def action_choose_config(self) -> None:
         if self._phase in (AppPhase.RUNNING, AppPhase.PAUSED):
@@ -325,42 +298,38 @@ class SolarEApp(App):
         self._update_controls()
 
     def _update_controls(self) -> None:
-        # Only the current primary/next-step action gets variant="success" (green) - same
-        # one-highlighted-choice-the-rest-muted pattern as the confirm dialog's Yes/No, rather
-        # than every button rendering green regardless of relevance.
-        choose_btn = self.query_one("#btn_choose", Button)
-        choose_btn.disabled = self._phase in (
-            AppPhase.RUNNING,
-            AppPhase.PAUSED,
-            AppPhase.STOPPING,
-        )
-        choose_btn.variant = "success" if self._phase == AppPhase.IDLE else "default"
+        # The Footer is the only control surface now (see check_action for what's actually
+        # enabled/disabled per action) - this just prompts it to re-poll check_action after a
+        # state change, same call sites that used to also touch a big Button row directly.
+        self.refresh_bindings()
 
-        start_btn = self.query_one("#btn_start", Button)
-        start_btn.disabled = self._phase != AppPhase.LOADED
-        start_btn.variant = "success" if self._phase == AppPhase.LOADED else "default"
-
-        pause_btn = self.query_one("#btn_pause", Button)
-        pause_btn.disabled = self._phase not in (AppPhase.RUNNING, AppPhase.PAUSED)
-        pause_btn.label = "Resume \\[P]" if self._phase == AppPhase.PAUSED else "Pause \\[P]"
-        pause_btn.variant = "success" if self._phase in (AppPhase.RUNNING, AppPhase.PAUSED) else "default"
-
-        self.query_one("#btn_stop", Button).disabled = self._phase not in (
-            AppPhase.RUNNING,
-            AppPhase.PAUSED,
-        )
-        gate_configured = (
+    def _gate_configured(self) -> bool:
+        return (
             self._config is not None
             and self._config.solar_gate is not None
             and self._config.solar_gate.enabled
         )
-        solar_btn = self.query_one("#btn_solar_gate", Button)
-        solar_btn.disabled = not (
-            gate_configured and self._phase in (AppPhase.RUNNING, AppPhase.PAUSED)
-        )
-        solar_btn.label = (
-            "Solar Gating: OFF \\[G]" if self._solar_override_active else "Solar Gating: ON \\[G]"
-        )
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Grays out (but keeps visible) a Footer key binding whose action doesn't apply to the
+        current AppPhase - same rules the old per-Button .disabled logic used, now expressed once
+        here instead of duplicated across six Button widgets. None means "disabled but still
+        shown, not clickable" (Textual's own semantics - False would hide the entry entirely,
+        which loses the at-a-glance "this exists, just not right now" a real disabled control
+        gives)."""
+        if action == "choose_config":
+            return None if self._phase in (AppPhase.RUNNING, AppPhase.PAUSED, AppPhase.STOPPING) else True
+        if action == "start":
+            return True if self._phase == AppPhase.LOADED else None
+        if action in ("toggle_pause", "stop"):
+            return True if self._phase in (AppPhase.RUNNING, AppPhase.PAUSED) else None
+        if action == "toggle_solar_gate":
+            return (
+                True
+                if self._gate_configured() and self._phase in (AppPhase.RUNNING, AppPhase.PAUSED)
+                else None
+            )
+        return True
 
     def _refresh(self) -> None:
         self._render_hw_panel(self._hw_monitor.poll())
@@ -413,6 +382,12 @@ class SolarEApp(App):
             + Content.from_markup(f"   [b]Elapsed[/b] {_format_timedelta(elapsed)}   ")
             + _labeled("ETA", job.eta_text)
         )
+        if self._gate_configured():
+            # Used to live only on the old Solar Gating button's own label - now that the
+            # button's gone (Footer + check_action instead), that on/off state needs a real home
+            # or it becomes invisible on the dashboard entirely.
+            gate_text = "OFF" if job.solar_override else "ON"
+            meta = meta + Content.from_markup(f"   [b]Solar Gating[/b] {gate_text}")
         if job.active_chunks:
             meta = (
                 meta

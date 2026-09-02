@@ -59,32 +59,6 @@ Screen {
     height: 1fr;
 }
 
-#controls {
-    height: 3;
-    align: center middle;
-    background: #000000;
-}
-
-#controls Button {
-    /* Deliberately no background/border/color override here - variant="success" (applied
-    dynamically in _update_controls()) already gives these the real embossed/3D Textual button
-    look (lighter top bevel edge, darker bottom edge, solid green fill) for whichever one is the
-    current primary action; every other button falls back to Textual's own default (default)
-    variant, the same muted black/gray look as the confirm dialog's No. Disabled state falls
-    back to Textual's own default (dimmed text opacity, same bevel), which already reads fine. */
-    margin: 0 1;
-    min-width: 10;
-}
-
-#controls Button:focus {
-    /* Same real bug as the confirm dialog's Yes button (see theme.tcss's ConfirmScreen section):
-    Textual's default Button:focus applies bold+reverse text-style, which swaps fg/bg and reads
-    as a stray dark band through the button - confirmed live here too (these buttons never had
-    a :focus override before, so clicking one and giving it focus would have shown the same
-    glitch). Neutralized the same way: keep bold, drop reverse. */
-    text-style: bold;
-}
-
 Footer {
     background: #000000;
     color: #4a5a4a;
