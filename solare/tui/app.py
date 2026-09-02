@@ -382,7 +382,7 @@ class SolarEApp(App):
         # Content.from_markup()/.update(). Built via Content concatenation instead (see _safe/
         # _labeled) so free-form text is never parsed as markup, no matter what it contains.
         elapsed = datetime.datetime.now() - job.started_at
-        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
         meta = (
             _labeled("Now", now)
@@ -617,10 +617,19 @@ class SolarEApp(App):
 
 
 def _format_timedelta(td: datetime.timedelta) -> str:
+    """'1m 17s' for a short elapsed, dropping to 'Xh Ym'/'Xd Yh Zm' (no seconds) once there's a
+    bigger unit worth leading with - matches the same drop-leading-zero-units style as
+    live_job._format_duration, just with a seconds tier since elapsed (unlike an ETA countdown)
+    is watched live and second-level feedback actually matters at the short end."""
     total_seconds = int(td.total_seconds())
-    hours, remainder = divmod(total_seconds, 3600)
+    days, remainder = divmod(total_seconds, 86400)
+    hours, remainder = divmod(remainder, 3600)
     minutes, seconds = divmod(remainder, 60)
-    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    if days:
+        return f"{days}d {hours}h {minutes}m"
+    if hours:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m {seconds}s"
 
 
 def _format_seconds(seconds: float) -> str:

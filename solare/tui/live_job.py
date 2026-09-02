@@ -85,6 +85,7 @@ class LiveJobSource:
     def poll_job(self) -> JobState:
         state = self._runner.get_state()
         now = datetime.datetime.now()
+        overall_pct = _overall_pct(state)
 
         if state.phase == RunPhase.FAILED:
             eta_text = f"FAILED - {state.error}"
@@ -112,10 +113,16 @@ class LiveJobSource:
                 rate = active_seconds / state.frames_done
                 remaining = rate * max(0, state.frames_total - state.frames_done)
                 eta_time = now + datetime.timedelta(seconds=remaining)
-                pct = 100.0 * state.frames_done / state.frames_total
+                # overall_pct, not the raw frames_done/frames_total fraction - the progress bar
+                # already shows overall_pct as its own "X%" (phase-banded across the whole item,
+                # not just video encoding), so showing the unscaled frame fraction here instead
+                # read as a real contradiction (a *higher* number right next to a lower one that's
+                # supposedly the same "done" percentage) - confirmed live, video-encode-only
+                # naturally runs ahead of the whole-item percentage while other phases are still
+                # ahead, not behind it.
                 eta_text = (
                     f"{_format_eta(remaining, eta_time, now)} "
-                    f"- {pct:.1f}% done - {state.phase.value}"
+                    f"- {overall_pct:.1f}% done - {state.phase.value}"
                 )
             else:
                 eta_text = f"calculating... - {state.phase.value}"
@@ -182,7 +189,7 @@ class LiveJobSource:
             active_chunks=active_chunks,
             waiting_for_solar=state.waiting_for_solar,
             solar_override=state.solar_override,
-            overall_pct=_overall_pct(state),
+            overall_pct=overall_pct,
         )
 
 
@@ -209,14 +216,14 @@ def _format_duration(seconds: float) -> str:
 
 
 def _format_eta(remaining_seconds: float, eta_time: datetime.datetime, now: datetime.datetime) -> str:
-    """'20d 11h 4m → Tuesday, Sep 22, 2026 at 19:28' - duration first (how long the wait is),
+    """'20d 11h 4m → Tue, Sep 22, 2026 at 19:28' - duration first (how long the wait is),
     then the actual moment it ends. A bare "19:28" used to lead, with the duration parenthesized
     as an afterthought - fine for a same-day ETA, but actively misleading for a multi-day one: a
     bare time-of-day reads as "today at 19:28" with nothing marking it as 20 days out unless you
     separately parse the parenthetical. Year is only shown when the ETA actually lands in a
     different year than now - the one real case being encoding into a queue long enough to cross
     a December 31st, not something worth showing every single time."""
-    weekday_and_month_day = eta_time.strftime("%A, %b") + f" {eta_time.day}"
+    weekday_and_month_day = eta_time.strftime("%a, %b") + f" {eta_time.day}"
     if eta_time.year != now.year:
         date_part = f"{weekday_and_month_day}, {eta_time.year}"
     else:
