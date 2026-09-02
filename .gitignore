@@ -14,6 +14,10 @@ credentials.json
 # Last-started-job tracking (solare/tui/last_job.py) - a real, personal config file path.
 state.json
 
+# Last-known Growatt reading (solare/solar/cache.py) - real account usage data, and only useful
+# as a bridge across a restart (see MAX_READING_AGE_SECONDS), never meant to be committed.
+solar-cache.json
+
 # Per-title recipe configs - only the example template is ever committed.
 # Real configs carry the user's actual source/output file paths.
 config/*.json

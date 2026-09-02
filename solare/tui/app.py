@@ -32,7 +32,7 @@ from solare.engine import (
     prepend_local_tools_to_path,
 )
 from solare.hwmonitor import HardwareMonitor, HardwareSnapshot
-from solare.solar import GrowattCredentials, SolarPoller
+from solare.solar import MAX_READING_AGE_SECONDS, GrowattCredentials, SolarPoller
 from solare.tui import colors, links
 from solare.tui.confirm import ConfirmScreen
 from solare.tui.last_job import last_config_path, record_last_config
@@ -549,7 +549,11 @@ class SolarEApp(App):
             total_kwh=summary.total_kwh,
             capacity_pct=capacity_pct,
             nominal_power_w=summary.nominal_power_w,
-            stale=bool(error),
+            # Not just bool(error) - a reading that's aged past MAX_READING_AGE_SECONDS is exactly
+            # as untrustworthy as one from a poll that just failed, same rule is_producing() uses
+            # for the gating decision. Otherwise a real multi-hour outage would keep showing a
+            # confident, unflagged number as long as the *next* poll attempt hadn't run yet.
+            stale=bool(error) or age_seconds > MAX_READING_AGE_SECONDS,
         )
 
     def _render_solar_panel(self, solar: SolarState | None) -> None:
