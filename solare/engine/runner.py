@@ -78,8 +78,19 @@ class RunState:
     error: str | None = None
     log_lines: list[str] = field(default_factory=list)
     started_at: datetime.datetime = field(default_factory=datetime.datetime.now)
-    item_started_at: datetime.datetime = field(default_factory=datetime.datetime.now)
     item_paused_seconds: float = 0.0
+    # Accrual, not subtraction: item_active_seconds only accumulates while a segment is open, and
+    # a segment is only ever opened for confirmed-active work (see JobRunner._begin_active_segment/
+    # _end_active_segment) - never opened at all for the pre-start solar wait, closed for the
+    # duration of any mid-encode pause/solar-suspend. This is the total for CLOSED segments only;
+    # a currently-open segment's own elapsed time is added on top by whoever reads this (see
+    # live_job.py). Deliberately not "elapsed since item start minus every pause type" (the
+    # previous design) - that model requires remembering to subtract every non-active state that
+    # exists now *and* every one added later, and a real one (the pre-start solar wait) was missed
+    # for a long time as a direct result. Accrual can't have that failure mode: anything not
+    # explicitly opened as active is excluded by construction, not by remembering to carve it out.
+    item_active_seconds: float = 0.0
+    active_segment_started_at: datetime.datetime | None = None
     # Active (paused-time-excluded) wall-clock seconds for each item actually encoded this run -
     # not skipped ones (already_done items take ~0 real time and would skew the average sharply
     # downward). Batch ETA is average-of-these times remaining items - see live_job._batch_eta_text.
@@ -165,6 +176,23 @@ class JobRunner:
             self._pause_started_at = None
             self._state.pause_started_at = None
 
+    def _begin_active_segment(self) -> None:
+        """Idempotent - safe to call every tick regardless of whether a segment is already open,
+        same calling convention as Av1anRunner.set_suspended."""
+        with self._lock:
+            if self._state.active_segment_started_at is None:
+                self._state.active_segment_started_at = datetime.datetime.now()
+
+    def _end_active_segment(self) -> None:
+        """Idempotent - a no-op if no segment is currently open."""
+        with self._lock:
+            if self._state.active_segment_started_at is not None:
+                elapsed = (
+                    datetime.datetime.now() - self._state.active_segment_started_at
+                ).total_seconds()
+                self._state.item_active_seconds += elapsed
+                self._state.active_segment_started_at = None
+
     def _update_solar_gate(self) -> None:
         gate = self._config.solar_gate
         should_gate = False
@@ -235,6 +263,8 @@ class JobRunner:
                 self._state.audio_track_index = 0
                 self._state.audio_track_count = 0
                 self._state.item_paused_seconds = 0.0
+                self._state.item_active_seconds = 0.0
+                self._state.active_segment_started_at = None
             if item.already_done:
                 self._log(f"skipping {item.src_file.name} - output already exists")
                 continue
@@ -252,11 +282,10 @@ class JobRunner:
                 # branch below, showing a stopped job as finished successfully.
                 return
             with self._lock:
-                active_seconds = max(
-                    0.0,
-                    (datetime.datetime.now() - self._state.item_started_at).total_seconds()
-                    - self._state.item_paused_seconds,
-                )
+                # _run_item's own _end_active_segment() call already closed the last open
+                # segment on a successful completion (the only path that reaches here), so
+                # item_active_seconds is already the complete total - nothing left to add.
+                active_seconds = self._state.item_active_seconds
                 self._state.completed_item_seconds.append(active_seconds)
             timing.record(Path(self._config.output_root), str(item.out_file), active_seconds)
         with self._lock:
@@ -284,13 +313,12 @@ class JobRunner:
         self._wait_for_solar_gate_before_start()
         if self._stop.is_set():
             return
-        # Stamped here, not at the top of _run()'s per-item loop - an overnight wait for solar
-        # to start at all could be hours, and that's not "active" time for this item any more
-        # than a mid-encode solar pause is. Confirmed live: a real 8+ hour recorded duration for
-        # one episode was almost entirely this pre-start wait, not actual encode work, badly
-        # inflating the per-item average the batch ETA is built from.
-        with self._lock:
-            self._state.item_started_at = datetime.datetime.now()
+        # Opened here, not at the top of _run()'s per-item loop - an overnight wait for solar to
+        # start at all could be hours, and that's not active work for this item any more than a
+        # mid-encode solar pause is. _wait_for_av1an() closes/reopens this same segment around its
+        # own suspend windows; it then stays open through Dolby Vision/audio/mux/integrity (none
+        # of which have a pause concept) until _run_item returns.
+        self._begin_active_segment()
         self._av1an.start()
         self._log(f"video encode started: {item.src_file.name}")
 
@@ -368,6 +396,7 @@ class JobRunner:
             item.out_file.rename(item.out_file.with_suffix(item.out_file.suffix + ".FAILED"))
             raise RuntimeError(f"integrity check failed: {result.reason}")
         self._log(f"integrity OK: {result.reason}")
+        self._end_active_segment()
 
     def _cleanup_temp_dir(self, temp_dir: Path) -> None:
         """A just-exited av1an/vspipe child can still hold a handle on a chunk file for a moment
@@ -451,9 +480,16 @@ class JobRunner:
             # stops applying (a real user complaint: a whole night's wait to finish a sub-minute
             # merge). Manual pause is left alone here - that's a deliberate user action, not an
             # automatic policy, so it keeps suspending through finalizing same as before.
-            self._av1an.set_suspended(
-                self._paused.is_set() or (self._solar_gated.is_set() and not finalizing)
+            should_be_suspended = self._paused.is_set() or (
+                self._solar_gated.is_set() and not finalizing
             )
+            self._av1an.set_suspended(should_be_suspended)
+            # Mirrors set_suspended exactly - the active-time accrual should be open precisely
+            # when av1an itself isn't suspended, nothing more or less.
+            if should_be_suspended:
+                self._end_active_segment()
+            else:
+                self._begin_active_segment()
             with self._lock:
                 if progress is not None:
                     self._state.frames_done = progress.done_frames

@@ -123,9 +123,13 @@ class LiveJobSource:
             # live to look indistinguishable from a genuine hang on a long file with many chunks.
             eta_text = "all chunks done - finalizing (concatenating into the output file)..."
         else:
-            active_seconds = (
-                now - state.item_started_at
-            ).total_seconds() - state.item_paused_seconds
+            # item_active_seconds only covers *closed* segments - the currently-open one (this
+            # branch only runs while actively encoding, so one should be open) isn't in there yet,
+            # same reasoning as pause_started_at not being folded into item_paused_seconds until
+            # its window closes.
+            active_seconds = state.item_active_seconds
+            if state.active_segment_started_at is not None:
+                active_seconds += (now - state.active_segment_started_at).total_seconds()
             if state.frames_done > 5 and active_seconds > 5 and state.frames_total:
                 rate = active_seconds / state.frames_done
                 remaining = rate * max(0, state.frames_total - state.frames_done)
