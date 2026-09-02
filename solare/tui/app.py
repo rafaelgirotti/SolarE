@@ -117,6 +117,7 @@ class SolarEApp(App):
     def compose(self) -> ComposeResult:
         with Vertical(id="job_panel"):
             yield Static(id="job_meta")
+            yield Static(id="batch_line")
             yield TextProgressBar(
                 id="chunks_bar",
                 filled_color=colors.SAFE,
@@ -390,6 +391,9 @@ class SolarEApp(App):
             )
             border_title = Content(" SolarE ")
         self.query_one("#job_meta", Static).update(text)
+        self.query_one("#batch_line", Static).display = False  # otherwise a batch's current-item
+        # line from a previous run stays visible, stale, once the job stops and this idle view
+        # takes over - _render_job_panel is the only other place that touches this widget.
         self.query_one("#chunks_bar", TextProgressBar).update_progress(0, 1, "")
         self.query_one("#job_footer", Static).update("")
         self.query_one("#job_panel", Vertical).border_title = border_title
@@ -409,10 +413,6 @@ class SolarEApp(App):
             + Content.from_markup(f"   [b]Elapsed[/b] {_format_timedelta(elapsed)}   ")
             + _labeled("ETA", job.eta_text)
         )
-        if job.batch_summary:
-            meta = meta + Content("\n") + _labeled("Batch", job.batch_summary)
-            if job.batch_eta_text:
-                meta = meta + Content("   ") + _labeled("Batch ETA", job.batch_eta_text)
         if job.active_chunks:
             meta = (
                 meta
@@ -421,6 +421,25 @@ class SolarEApp(App):
                 + self._format_active_chunks(job.active_chunks)
             )
         self.query_one("#job_meta", Static).update(meta)
+
+        # Its own widget, not folded into job_meta above - text-wrap/text-overflow are per-widget
+        # CSS properties (see theme.tcss), and the current item's name is the one piece here that
+        # should truncate with an ellipsis at the line edge instead of wrapping, while everything
+        # else in the panel keeps wrapping normally. The hyperlink goes last so it's what actually
+        # gets cut when the line is too long, not the item-count/ETA text ahead of it.
+        batch_line = self.query_one("#batch_line", Static)
+        batch_line.display = job.batch_summary is not None
+        if job.batch_summary is not None:
+            line = _labeled("Batch", job.batch_summary)
+            if job.batch_eta_text:
+                line = line + Content("   ") + _labeled("Batch ETA", job.batch_eta_text)
+            if job.current_item_name and job.current_item_src_path:
+                line = (
+                    line
+                    + Content("   current: ")
+                    + links.hyperlink(job.current_item_name, job.current_item_src_path)
+                )
+            batch_line.update(line)
 
         # overall_pct spans every phase (video encode + audio + mux + integrity), not just
         # frames_done/frames_total - a frame-only percentage hit 100% the moment av1an finished
@@ -457,7 +476,7 @@ class SolarEApp(App):
         self.query_one("#job_footer", Static).update(footer)
 
         # Deliberately just title + phase, no item-count/filename - those already show in the
-        # footer (item count) and batch_summary (current filename, batches only), so the always-
+        # footer (item count) and the Batch line (current filename, batches only), so the always-
         # visible title bar stays short and equally clean for a single-file title or a 24-item
         # batch, instead of growing with a raw scene-release filename or a redundant "(1/1)".
         panel = self.query_one("#job_panel", Vertical)

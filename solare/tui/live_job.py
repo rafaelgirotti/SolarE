@@ -121,12 +121,16 @@ class LiveJobSource:
                 eta_text = f"calculating... - {state.phase.value}"
 
         batch_summary = None
+        current_item_name = None
+        current_item_src_path = None
         if state.item_count > 1:
             completed = state.item_index - 1
-            batch_summary = (
-                f"{state.item_index}/{state.item_count} items ({completed} completed) - "
-                f"current: {state.current_item_name}"
-            )
+            batch_summary = f"{state.item_index}/{state.item_count} items ({completed} completed)"
+            # Split from batch_summary rather than baked into it - the dashboard renders this part
+            # as its own non-wrapping, ellipsis-truncating hyperlink to the real source file, which
+            # needs the name and path as separate values, not pre-joined into one display string.
+            current_item_name = state.current_item_name
+            current_item_src_path = state.current_item_src_path
         batch_eta_text = _batch_eta_text(state, now)
 
         output_root = Path(self._config.output_root)
@@ -169,6 +173,8 @@ class LiveJobSource:
             eta_text=eta_text,
             batch_summary=batch_summary,
             batch_eta_text=batch_eta_text,
+            current_item_name=current_item_name,
+            current_item_src_path=current_item_src_path,
             output_path=str(disk_check_path),
             disk_free_gb=round(disk_usage.free / (1024**3), 1),
             output_used_gb=_sum_output_size_gb(output_root),

@@ -15,6 +15,13 @@ Screen {
     padding: 0 1;
 }
 
+#batch_line {
+    height: 1;
+    width: 100%;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
 #chunks_bar {
     height: 1;
     width: 50%;

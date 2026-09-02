@@ -36,6 +36,9 @@ class JobState:
     batch_summary: str | None
     batch_eta_text: str | None  # whole-batch ETA, from the average of already-completed items'
     # real encode time - see live_job._batch_eta_text. None until at least one item has finished.
+    current_item_name: str | None  # display name of the item currently being processed - kept
+    current_item_src_path: str | None  # separate from batch_summary so the dashboard can render
+    # it as its own non-wrapping, ellipsis-truncating hyperlink to the real source file
     output_path: str
     disk_free_gb: float
     output_used_gb: float

@@ -55,6 +55,8 @@ class RunState:
     item_index: int = 0
     item_count: int = 0
     current_item_name: str = ""
+    current_item_src_path: str = ""  # full source path, for the dashboard's hyperlink - name
+    # alone (a display string) isn't enough to link back to the real file
     frames_done: int = 0  # av1an's done.json is frame-based, not chunk-based - see
     frames_total: int = 0  # ChunkProgress/ActiveChunkInfo for real per-chunk tracking
     chunk_progress: ChunkProgress | None = None
@@ -225,6 +227,7 @@ class JobRunner:
             with self._lock:
                 self._state.item_index = i + 1
                 self._state.current_item_name = item.src_file.name
+                self._state.current_item_src_path = str(item.src_file)
                 self._state.frames_done = 0
                 self._state.frames_total = 0
                 self._state.chunk_progress = None
