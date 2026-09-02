@@ -615,8 +615,15 @@ class SolarEApp(App):
 
     def _render_log_panel(self, log_lines: list[str]) -> None:
         log = self.query_one("#log_panel", RichLog)
+        # Explicit width, not RichLog's own auto-sizing - write()'s default logic only shrinks a
+        # line down to the visible area if that's wider than RichLog.min_width (78 columns), so a
+        # panel narrower than 78 still wraps at 78 and needs a horizontal scrollbar regardless of
+        # wrap=True. Passing width= here bypasses that floor entirely (and the tracked "widest
+        # line ever written," which only ever grows - once a wide measurement sneaks in, wrap
+        # alone can't undo it), pinning every line to the panel's real, current width.
+        width = max(1, log.scrollable_content_region.width)
         for line in log_lines[self._rendered_log_count :]:
-            log.write(line)
+            log.write(line, width=width)
         self._rendered_log_count = len(log_lines)
 
 
