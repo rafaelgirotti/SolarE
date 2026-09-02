@@ -117,6 +117,17 @@ def parse_chunk_progress(log_path: Path, recent_count: int = 10) -> ChunkProgres
         m = _FINISHED_RE.match(line)
         if m:
             worker = int(m.group("worker"))
+            # The line split by the tail seek isn't always dropped cleanly - if the seek offset
+            # lands inside the timestamp itself (ts is an unvalidated \S+, not constrained to look
+            # like a real timestamp), everything after it can still be well-formed enough to match
+            # the regex, just with a truncated ts ("026-09-01T..." missing its leading "2").
+            # Confirmed live: crashed the whole encode with an uncaught ValueError from
+            # fromisoformat(). A line whose timestamp doesn't parse is exactly as unusable as one
+            # that didn't match the regex at all - skip it the same way, don't propagate.
+            try:
+                finished_at = datetime.datetime.fromisoformat(m.group("ts"))
+            except ValueError:
+                continue
             active.pop(worker, None)
             durations.append(float(m.group("secs")))
             finished.append(
@@ -126,18 +137,22 @@ def parse_chunk_progress(log_path: Path, recent_count: int = 10) -> ChunkProgres
                     frames=int(m.group("frames")),
                     fps=float(m.group("fps")),
                     seconds=float(m.group("secs")),
-                    finished_at=datetime.datetime.fromisoformat(m.group("ts")),
+                    finished_at=finished_at,
                 )
             )
             continue
         m = _STARTED_RE.match(line)
         if m:
             worker = int(m.group("worker"))
+            try:
+                started_at = datetime.datetime.fromisoformat(m.group("ts"))
+            except ValueError:
+                continue
             active[worker] = ActiveChunk(
                 worker_id=worker,
                 chunk_index=m.group("chunk"),
                 frames=int(m.group("frames")),
-                started_at=datetime.datetime.fromisoformat(m.group("ts")),
+                started_at=started_at,
             )
 
     return ChunkProgress(
