@@ -33,6 +33,7 @@ from solare.engine.dolby_vision import inject_rpu
 from solare.engine.integrity import check_output_integrity
 from solare.engine.mux import mux_episode, resolve_subtitle_sources
 from solare.engine.queue import QueueItem, build_queue
+from solare.engine import timing
 from solare.solar import SolarPoller
 
 _POLL_INTERVAL_SECONDS = 1.0
@@ -89,6 +90,16 @@ class JobRunner:
         self._queue: list[QueueItem] = build_queue(config)
         self._lock = threading.Lock()
         self._state = RunState(item_count=len(self._queue))
+        # Seed the batch-ETA average with real durations from items already completed in a
+        # previous run of this same batch (persisted across restarts - see engine.timing) - only
+        # ones this queue currently sees as already_done, so a stale entry for a title whose
+        # source file no longer matches doesn't sneak into the average.
+        durations = timing.load(Path(self._config.output_root))
+        for item in self._queue:
+            if item.already_done:
+                seconds = durations.get(str(item.out_file))
+                if seconds is not None:
+                    self._state.completed_item_seconds.append(seconds)
         self._paused = threading.Event()
         self._solar_gated = threading.Event()
         self._solar_override = threading.Event()  # user chose to skip solar gating for this run
@@ -239,10 +250,13 @@ class JobRunner:
                 # branch below, showing a stopped job as finished successfully.
                 return
             with self._lock:
-                active_seconds = (
-                    datetime.datetime.now() - self._state.item_started_at
-                ).total_seconds() - self._state.item_paused_seconds
-                self._state.completed_item_seconds.append(max(0.0, active_seconds))
+                active_seconds = max(
+                    0.0,
+                    (datetime.datetime.now() - self._state.item_started_at).total_seconds()
+                    - self._state.item_paused_seconds,
+                )
+                self._state.completed_item_seconds.append(active_seconds)
+            timing.record(Path(self._config.output_root), str(item.out_file), active_seconds)
         with self._lock:
             self._state.phase = RunPhase.DONE
 
