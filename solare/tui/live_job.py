@@ -85,7 +85,6 @@ class LiveJobSource:
     def poll_job(self) -> JobState:
         state = self._runner.get_state()
         now = datetime.datetime.now()
-        overall_pct = _overall_pct(state)
 
         if state.phase == RunPhase.FAILED:
             eta_text = f"FAILED - {state.error}"
@@ -113,17 +112,13 @@ class LiveJobSource:
                 rate = active_seconds / state.frames_done
                 remaining = rate * max(0, state.frames_total - state.frames_done)
                 eta_time = now + datetime.timedelta(seconds=remaining)
-                # overall_pct, not the raw frames_done/frames_total fraction - the progress bar
-                # already shows overall_pct as its own "X%" (phase-banded across the whole item,
-                # not just video encoding), so showing the unscaled frame fraction here instead
-                # read as a real contradiction (a *higher* number right next to a lower one that's
-                # supposedly the same "done" percentage) - confirmed live, video-encode-only
-                # naturally runs ahead of the whole-item percentage while other phases are still
-                # ahead, not behind it.
-                eta_text = (
-                    f"{_format_eta(remaining, eta_time, now)} "
-                    f"- {overall_pct:.1f}% done - {state.phase.value}"
-                )
+                # No percentage here - the progress bar already shows overall_pct as its own "X%"
+                # right below this line, so a second one here was pure duplication once both
+                # showed the same (correct) number. A previous version showed the raw
+                # frames_done/frames_total fraction instead, which actively contradicted the
+                # bar's number rather than just repeating it - fixed, then found redundant even
+                # once fixed.
+                eta_text = f"{_format_eta(remaining, eta_time, now)} - {state.phase.value}"
             else:
                 eta_text = f"calculating... - {state.phase.value}"
 
@@ -189,7 +184,7 @@ class LiveJobSource:
             active_chunks=active_chunks,
             waiting_for_solar=state.waiting_for_solar,
             solar_override=state.solar_override,
-            overall_pct=overall_pct,
+            overall_pct=_overall_pct(state),
         )
 
 
