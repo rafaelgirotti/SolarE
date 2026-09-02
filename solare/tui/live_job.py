@@ -233,16 +233,24 @@ def _format_duration(seconds: float) -> str:
 
 
 def _format_eta(remaining_seconds: float, eta_time: datetime.datetime, now: datetime.datetime) -> str:
-    """'20d 11h 4m → Tue, Sep 22, 2026 at 19:28' - duration first (how long the wait is),
-    then the actual moment it ends. A bare "19:28" used to lead, with the duration parenthesized
-    as an afterthought - fine for a same-day ETA, but actively misleading for a multi-day one: a
-    bare time-of-day reads as "today at 19:28" with nothing marking it as 20 days out unless you
+    """'20d 11h 4m → Tue, Sep 22, 2026 at 19:28' - duration first (how long the wait is), then
+    the actual moment it ends. A bare "19:28" used to lead, with the duration parenthesized as an
+    afterthought - fine for a same-day ETA, but actively misleading for a multi-day one: a bare
+    time-of-day reads as "today at 19:28" with nothing marking it as 20 days out unless you
     separately parse the parenthetical. Year is only shown when the ETA actually lands in a
-    different year than now - the one real case being encoding into a queue long enough to cross
-    a December 31st, not something worth showing every single time."""
-    weekday_and_month_day = eta_time.strftime("%a, %b") + f" {eta_time.day}"
-    if eta_time.year != now.year:
-        date_part = f"{weekday_and_month_day}, {eta_time.year}"
+    different year than now (encoding into a queue long enough to cross a December 31st).
+
+    The date itself is dropped entirely when the ETA lands on today - "2h 21m → 12:47", not
+    "2h 21m → Wed, Sep 2 at 12:47" - a duration under a few hours already makes "today" obvious,
+    so the date only adds noise there; it earns its place once the ETA is far enough out that
+    which day matters."""
+    if eta_time.date() == now.date():
+        when = eta_time.strftime("%H:%M")
     else:
-        date_part = weekday_and_month_day
-    return f"{_format_duration(remaining_seconds)} → {date_part} at {eta_time.strftime('%H:%M')}"
+        weekday_and_month_day = eta_time.strftime("%a, %b") + f" {eta_time.day}"
+        if eta_time.year != now.year:
+            date_part = f"{weekday_and_month_day}, {eta_time.year}"
+        else:
+            date_part = weekday_and_month_day
+        when = f"{date_part} at {eta_time.strftime('%H:%M')}"
+    return f"{_format_duration(remaining_seconds)} → {when}"
