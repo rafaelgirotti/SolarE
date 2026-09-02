@@ -68,6 +68,14 @@ def _labeled(label: str, value: object) -> Content:
     return Content.from_markup(f"[b]{_label(label)}[/b]") + _safe(value)
 
 
+def _config_summary_content(config: TitleConfig) -> Content:
+    """A safe '<bold title>\\n<settings summary>' block for confirm dialogs that need to show
+    which config is in play - title/settings_summary are user-authored JSON content, not
+    guaranteed free of markup-breaking characters (real titles in this project routinely contain
+    brackets, e.g. release-naming conventions like "[BD-Remux]")."""
+    return _safe(config.title).stylize("bold") + Content("\n") + _safe(config.settings_summary)
+
+
 class AppPhase(Enum):
     IDLE = "idle"  # no config loaded
     LOADED = "loaded"  # config loaded, job not started
@@ -167,12 +175,14 @@ class SolarEApp(App):
             return
 
         def on_answer(resume: bool | None) -> None:
-            if resume:
-                self._load_config(path)
+            if not resume:
+                return
+            if self._load_config(path):
                 self._update_controls()
+                self.action_start()
 
         self.push_screen(
-            ConfirmScreen(f"Resume last job?\n\n[b]{config.title}[/b]\n{config.settings_summary}"),
+            ConfirmScreen(Content("Resume last job?\n\n") + _config_summary_content(config)),
             on_answer,
         )
 
@@ -203,20 +213,34 @@ class SolarEApp(App):
         self.push_screen(ConfigPickerScreen(start_path=Path.cwd()), self._on_config_chosen)
 
     def _on_config_chosen(self, path: Path | None) -> None:
-        if path is not None:
-            self._load_config(path)
-            self._update_controls()
+        if path is None or not self._load_config(path):
+            return
+        self._update_controls()
 
-    def _load_config(self, path: str | Path) -> None:
+        def on_answer(start: bool | None) -> None:
+            if start:
+                self.action_start()
+
+        self.push_screen(
+            ConfirmScreen(
+                Content("Config loaded:\n\n")
+                + _config_summary_content(self._config)
+                + Content("\n\nStart now?")
+            ),
+            on_answer,
+        )
+
+    def _load_config(self, path: str | Path) -> bool:
         try:
             config = load_config(path)
         except (OSError, KeyError, ValueError) as e:
             self.notify(f"Couldn't load {path}: {e}", severity="error")
-            return
+            return False
         self._config = config
         self._job_source = None
         self._rendered_log_count = 0
         self._phase = AppPhase.LOADED
+        return True
 
     def action_start(self) -> None:
         if self._phase != AppPhase.LOADED or self._config is None:

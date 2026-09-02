@@ -4,14 +4,19 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.content import Content
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
 
 class ConfirmScreen(ModalScreen[bool]):
-    """Returns True/False via dismiss() - click Yes/No, or Y/N/Enter/Escape."""
+    """Returns True/False via dismiss() - click Yes/No, or Y/N/Enter/Escape.
 
-    def __init__(self, message: str) -> None:
+    message may be a plain str (parsed as markup - fine for our own hardcoded text) or a
+    pre-built Content (required for anything embedding free-form/config-authored text, which
+    isn't guaranteed free of markup-breaking characters - see app.py's _safe/_labeled)."""
+
+    def __init__(self, message: str | Content) -> None:
         super().__init__()
         self._message = message
 
