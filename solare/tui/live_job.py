@@ -55,7 +55,7 @@ def _batch_eta_text(state: RunState, now: datetime.datetime) -> str | None:
         return None
     remaining_seconds = avg_seconds * items_remaining
     eta_time = now + datetime.timedelta(seconds=remaining_seconds)
-    return f"{eta_time.strftime('%H:%M')} (in {_format_hours_minutes(remaining_seconds)})"
+    return _format_eta(remaining_seconds, eta_time, now)
 
 
 class LiveJobSource:
@@ -114,7 +114,7 @@ class LiveJobSource:
                 eta_time = now + datetime.timedelta(seconds=remaining)
                 pct = 100.0 * state.frames_done / state.frames_total
                 eta_text = (
-                    f"{eta_time.strftime('%H:%M')} (in {_format_hours_minutes(remaining)}) "
+                    f"{_format_eta(remaining, eta_time, now)} "
                     f"- {pct:.1f}% done - {state.phase.value}"
                 )
             else:
@@ -193,7 +193,32 @@ def _sum_output_size_gb(output_root: Path) -> float:
     return round(total / (1024**3), 2)
 
 
-def _format_hours_minutes(seconds: float) -> str:
+def _format_duration(seconds: float) -> str:
+    """'20d 11h 4m' - never leaves days out and silently overflows hours (a real 491-hour ETA
+    read as exactly that, confirmed live, forcing real division to make sense of it). Drops
+    leading zero units instead of always showing all three - "4m" for a short wait reads better
+    than "0d 0h 4m", and nothing here needs a fixed-width column."""
     total_minutes = int(seconds // 60)
-    hours, minutes = divmod(total_minutes, 60)
-    return f"{hours}h {minutes}m"
+    days, rem_minutes = divmod(total_minutes, 24 * 60)
+    hours, minutes = divmod(rem_minutes, 60)
+    if days:
+        return f"{days}d {hours}h {minutes}m"
+    if hours:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
+
+
+def _format_eta(remaining_seconds: float, eta_time: datetime.datetime, now: datetime.datetime) -> str:
+    """'20d 11h 4m → Tuesday, Sep 22, 2026 at 19:28' - duration first (how long the wait is),
+    then the actual moment it ends. A bare "19:28" used to lead, with the duration parenthesized
+    as an afterthought - fine for a same-day ETA, but actively misleading for a multi-day one: a
+    bare time-of-day reads as "today at 19:28" with nothing marking it as 20 days out unless you
+    separately parse the parenthetical. Year is only shown when the ETA actually lands in a
+    different year than now - the one real case being encoding into a queue long enough to cross
+    a December 31st, not something worth showing every single time."""
+    weekday_and_month_day = eta_time.strftime("%A, %b") + f" {eta_time.day}"
+    if eta_time.year != now.year:
+        date_part = f"{weekday_and_month_day}, {eta_time.year}"
+    else:
+        date_part = weekday_and_month_day
+    return f"{_format_duration(remaining_seconds)} → {date_part} at {eta_time.strftime('%H:%M')}"
