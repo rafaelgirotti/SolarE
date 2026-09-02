@@ -234,7 +234,6 @@ class JobRunner:
                 self._state.finalizing = False
                 self._state.audio_track_index = 0
                 self._state.audio_track_count = 0
-                self._state.item_started_at = datetime.datetime.now()
                 self._state.item_paused_seconds = 0.0
             if item.already_done:
                 self._log(f"skipping {item.src_file.name} - output already exists")
@@ -285,6 +284,13 @@ class JobRunner:
         self._wait_for_solar_gate_before_start()
         if self._stop.is_set():
             return
+        # Stamped here, not at the top of _run()'s per-item loop - an overnight wait for solar
+        # to start at all could be hours, and that's not "active" time for this item any more
+        # than a mid-encode solar pause is. Confirmed live: a real 8+ hour recorded duration for
+        # one episode was almost entirely this pre-start wait, not actual encode work, badly
+        # inflating the per-item average the batch ETA is built from.
+        with self._lock:
+            self._state.item_started_at = datetime.datetime.now()
         self._av1an.start()
         self._log(f"video encode started: {item.src_file.name}")
 

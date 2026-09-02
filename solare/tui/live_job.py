@@ -41,19 +41,37 @@ def _overall_pct(state: RunState) -> float:
 
 
 def _batch_eta_text(state: RunState, now: datetime.datetime) -> str | None:
-    """Average real (paused-time-excluded) duration of items already encoded this run, times
-    items still ahead - a rough per-item pace, not aware of per-title duration variance (a batch
-    mixing long movies and short specials would skew this), but still far better than no signal
-    at all for "when does the whole batch finish," which nothing previously answered. None before
-    the first item finishes (nothing to average yet) or for a single-item run (no "batch" to have
-    an ETA distinct from the item's own)."""
+    """Average real active-encode duration of items already completed this run (paused time and
+    any pre-start solar wait both excluded - see JobRunner._run_item), times items still ahead -
+    a rough per-item pace, not aware of per-title duration variance (a batch mixing long movies
+    and short specials would skew this), but still far better than no signal at all for "when
+    does the whole batch finish," which nothing previously answered. None before the first item
+    finishes (nothing to average yet) or for a single-item run (no "batch" to have an ETA
+    distinct from the item's own).
+
+    That average is pure active-encode work, not wall-clock time - solar gating means only part
+    of each day is actually spent encoding, so naively adding remaining active-seconds onto `now`
+    would understate how long the batch actually takes by however much time nights (and any other
+    gaps) add back in. Projected using how much of the batch's own elapsed wall-clock time has
+    actually been active so far, rather than separately modeling sunrise/sunset against the solar
+    API: whatever fraction of the past was active is the best available estimate for the future
+    too, and it self-corrects for weather/season/manual pauses without a second data source."""
     if state.item_count <= 1 or not state.completed_item_seconds:
         return None
-    avg_seconds = sum(state.completed_item_seconds) / len(state.completed_item_seconds)
+    total_active_so_far = sum(state.completed_item_seconds)
+    avg_active_seconds = total_active_so_far / len(state.completed_item_seconds)
     items_remaining = state.item_count - state.item_index + 1
     if items_remaining <= 0:
         return None
-    remaining_seconds = avg_seconds * items_remaining
+    remaining_active_seconds = avg_active_seconds * items_remaining
+
+    wall_clock_elapsed = (now - state.started_at).total_seconds()
+    if wall_clock_elapsed > 0 and total_active_so_far > 0:
+        active_fraction = min(1.0, total_active_so_far / wall_clock_elapsed)
+        remaining_seconds = remaining_active_seconds / active_fraction
+    else:
+        remaining_seconds = remaining_active_seconds
+
     eta_time = now + datetime.timedelta(seconds=remaining_seconds)
     return _format_eta(remaining_seconds, eta_time, now)
 
