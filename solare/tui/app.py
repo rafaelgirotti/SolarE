@@ -382,12 +382,18 @@ class SolarEApp(App):
             + Content.from_markup(f"   [b]Elapsed[/b] {_format_timedelta(elapsed)}   ")
             + _labeled("ETA", job.eta_text)
         )
-        if self._gate_configured():
+        if self._gate_configured() and job.solar_override:
             # Used to live only on the old Solar Gating button's own label - now that the
-            # button's gone (Footer + check_action instead), that on/off state needs a real home
-            # or it becomes invisible on the dashboard entirely.
-            gate_text = "OFF" if job.solar_override else "ON"
-            meta = meta + Content.from_markup(f"   [b]Solar Gating[/b] {gate_text}")
+            # button's gone (Footer + check_action instead), the override state needs a real
+            # home or it becomes invisible on the dashboard entirely. Shown only when actually
+            # overridden (the non-default, actionable state) rather than unconditionally - the
+            # first attempt appended "Solar Gating: ON" onto the Now/Elapsed/ETA line even in the
+            # common case, and that line was already unpredictable-length (ETA text varies a lot)
+            # before adding more to it - confirmed live, wrapped mid-label. Its own line, own
+            # color, only when it's actually worth calling out.
+            meta = meta + Content("\n") + Content.from_markup(
+                f"[{colors.WARN}]Solar Gating: OFF (manual override)[/{colors.WARN}]"
+            )
         if job.active_chunks:
             meta = (
                 meta

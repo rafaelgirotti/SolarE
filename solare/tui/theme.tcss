@@ -35,7 +35,7 @@ Screen {
     color: #ffb000;
     height: auto;
     padding: 0 1;
-    margin-top: 1;
+    margin-top: 0;
 }
 
 #solar_panel {
@@ -45,7 +45,7 @@ Screen {
     color: #33cc33;
     height: auto;
     padding: 0 1;
-    margin-top: 1;
+    margin-top: 0;
 }
 
 #log_panel {
@@ -54,9 +54,10 @@ Screen {
     border-title-style: bold;
     background: #000000;
     color: #33cc33;
-    margin-top: 1;
+    margin-top: 0;
     padding: 0 1;
     height: 1fr;
+    scrollbar-size-vertical: 1;
 }
 
 Footer {
