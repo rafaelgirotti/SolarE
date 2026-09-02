@@ -141,7 +141,6 @@ class SolarEApp(App):
 
     def on_mount(self) -> None:
         self.query_one("#hw_panel", Static).border_title = " Hardware "
-        self.query_one("#solar_panel", Static).border_title = " Solar "
         self.query_one("#log_panel", RichLog).border_title = " Recent log output "
 
         if self._solar_poller is not None:
@@ -390,17 +389,6 @@ class SolarEApp(App):
             + Content.from_markup(f"   [b]Elapsed[/b] {_format_timedelta(elapsed)}   ")
             + _labeled("ETA", job.eta_text)
         )
-        if self._gate_configured():
-            # Used to live only on the old Solar Gating button's own label - now that the
-            # button's gone (Footer + check_action instead), this state needs a real home or it
-            # becomes invisible on the dashboard entirely. Its own line, not appended onto
-            # Now/Elapsed/ETA - that line's length is already unpredictable (ETA text varies a
-            # lot), and appending there wrapped mid-label the moment ETA got long, confirmed live.
-            gate_color = colors.WARN if job.solar_override else colors.SAFE
-            gate_text = "OFF (manual override)" if job.solar_override else "ON"
-            meta = meta + Content("\n") + Content.from_markup(
-                f"[b]Solar Gating[/b] [{gate_color}]{gate_text}[/{gate_color}]"
-            )
         if job.active_chunks:
             meta = (
                 meta
@@ -566,6 +554,20 @@ class SolarEApp(App):
 
     def _render_solar_panel(self, solar: SolarState | None) -> None:
         panel = self.query_one("#solar_panel", Static)
+        # Gating on/off belongs with the rest of the solar-related status, not the job panel -
+        # moved here (into the panel's own title, always visible, never competing for a line with
+        # Now/Elapsed/ETA/Batch) after living briefly as a job_meta line that worked but wasn't
+        # the right home for it.
+        if self._gate_configured():
+            gate_color = colors.WARN if self._solar_override_active else colors.SAFE
+            gate_text = "OFF" if self._solar_override_active else "ON"
+            panel.border_title = (
+                Content(" Solar - Gating: ")
+                + Content(gate_text).stylize(gate_color)
+                + Content(" ")
+            )
+        else:
+            panel.border_title = Content(" Solar ")
         if solar is None:
             if self._solar_unavailable_reason is not None:
                 # A real exception message (Growatt API/credential-loading failure) - free-form,
