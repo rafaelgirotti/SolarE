@@ -386,8 +386,8 @@ class SolarEApp(App):
 
         meta = (
             _labeled("Now", now)
-            + Content.from_markup(f"   [b]Elapsed[/b] {_format_timedelta(elapsed)}   ")
-            + _labeled("ETA", job.eta_text)
+            + Content.from_markup(f"   [b]Elapsed[/b] {_format_timedelta(elapsed)}   [b]ETA[/b] ")
+            + _safe(job.eta_text)
         )
         if job.active_chunks:
             meta = (
