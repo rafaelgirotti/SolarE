@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime
+import re
 from enum import Enum
 from pathlib import Path
 
@@ -66,6 +67,20 @@ def _labeled(label: str, value: object) -> Content:
     """A bold hardcoded label (safe as markup) followed by a value that may be free-form/external
     (see _safe) - the label alone goes through Content.from_markup, the value never does."""
     return Content.from_markup(f"[b]{_label(label)}[/b]") + _safe(value)
+
+
+def _strip_redundant_show_prefix(current_item_name: str, show_title: str) -> str:
+    """clean_title()'s output (see runner.py) is usually "<Show Name> - S01E34 - ..." - fine on
+    its own (e.g. in the Batch line), but when appended right after the job title in the border
+    ("Monster (2004) - <this>"), that show name repeats right next to itself, e.g. "Monster
+    (2004) - Monster - S01E34 - ..." - confirmed live. show_title often carries a year suffix the
+    item name never does ("Monster (2004)" vs "Monster - S01E34..."), so match on the bare name
+    with any trailing "(YYYY)" stripped first, not an exact prefix."""
+    bare_title = re.sub(r"\s*\(\d{4}\)\s*$", "", show_title).strip()
+    prefix = f"{bare_title} - "
+    if bare_title and current_item_name.startswith(prefix):
+        return current_item_name[len(prefix) :]
+    return current_item_name
 
 
 def _config_summary_content(config: TitleConfig) -> Content:
@@ -410,10 +425,15 @@ class SolarEApp(App):
             if job.batch_eta_text:
                 line = line + Content("   ") + _labeled("Batch ETA", job.batch_eta_text)
             if job.current_item_name and job.current_item_src_path:
+                # Links to the containing folder, not the source file itself - the file is still
+                # mid-encode (nothing new to see by opening it), and a giant remux is a much
+                # heavier thing to launch a handler for than just opening its folder, if a handler
+                # even fires at all - confirmed live, clicking the file link did nothing visible.
+                src_folder = str(Path(job.current_item_src_path).parent)
                 line = (
                     line
                     + Content("   current: ")
-                    + links.hyperlink(job.current_item_name, job.current_item_src_path)
+                    + links.hyperlink(job.current_item_name, src_folder)
                 )
             batch_line.update(line)
 
@@ -451,12 +471,20 @@ class SolarEApp(App):
         )
         self.query_one("#job_footer", Static).update(footer)
 
-        # Deliberately just title + phase, no item-count/filename - those already show in the
-        # footer (item count) and the Batch line (current filename, batches only), so the always-
-        # visible title bar stays short and equally clean for a single-file title or a 24-item
-        # batch, instead of growing with a raw scene-release filename or a redundant "(1/1)".
+        # Title + current item, no phase - phase already shows in the ETA line and the progress
+        # bar's own label, so repeating it here was dead weight. current_item_name is already
+        # clean_title()'d (see runner.py), not the full scene-release filename, but Textual's own
+        # border-title rendering truncates with an ellipsis to fit regardless (render_border_label),
+        # so a longer name still degrades gracefully rather than wrapping or overflowing.
         panel = self.query_one("#job_panel", Vertical)
-        panel.border_title = Content(" ") + _safe(job.title) + Content.from_markup(f" - {job.phase} ")
+        border_title = Content(" ") + _safe(job.title)
+        if job.current_item_name:
+            border_title = (
+                border_title
+                + Content.from_markup(" - ")
+                + _safe(_strip_redundant_show_prefix(job.current_item_name, job.title))
+            )
+        panel.border_title = border_title + Content(" ")
 
         if job.solar_override != self._solar_override_active:
             self._solar_override_active = job.solar_override

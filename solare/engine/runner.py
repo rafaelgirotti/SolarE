@@ -32,7 +32,7 @@ from solare.engine.config import TitleConfig
 from solare.engine.dolby_vision import inject_rpu
 from solare.engine.integrity import check_output_integrity
 from solare.engine.mux import mux_episode, resolve_subtitle_sources
-from solare.engine.queue import QueueItem, build_queue
+from solare.engine.queue import QueueItem, build_queue, clean_title
 from solare.engine import timing
 from solare.solar import SolarPoller
 
@@ -254,7 +254,12 @@ class JobRunner:
                 return
             with self._lock:
                 self._state.item_index = i + 1
-                self._state.current_item_name = item.src_file.name
+                # clean_title(), not the raw filename - the same helper build_queue() already
+                # uses to derive the output name, so this is the item's "real" short name (e.g.
+                # "Monster - S01E34 - At the Edge of Fear"), not the full scene-release filename
+                # with every audio track and the release group spelled out. Used on the dashboard
+                # (border title, Batch line) where that boilerplate is dead weight - see app.py.
+                self._state.current_item_name = clean_title(self._config, item.src_file)
                 self._state.current_item_src_path = str(item.src_file)
                 self._state.frames_done = 0
                 self._state.frames_total = 0
