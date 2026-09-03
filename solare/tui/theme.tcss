@@ -58,6 +58,15 @@ Screen {
     padding: 0 1;
     height: 1fr;
     scrollbar-size-vertical: 1;
+    /* ScrollView's own default is overflow-x: auto, which is what lets a horizontal scrollbar
+    appear at all - explicit width on every write() (see app.py._render_log_panel) already keeps
+    lines within the visible area, but RichLog's own "widest line ever written" tracker only ever
+    grows and never resets, so any transient over-measurement (a real terminal resize during a
+    long-running session, in particular) leaves it stuck permanently. Since wrap=True means we
+    never actually need horizontal scrolling - every line is meant to fit by wrapping, not by
+    scrolling to see the rest - hidden here is a correct policy, not a workaround for one specific
+    cause. */
+    overflow-x: hidden;
     /* Textual's own defaults are bright magenta-on-gray - clashes hard against this theme's
     dim monochrome green/black, which is most of why the scrollbars read as "too big": a
     same-thickness bar in a jarring, unrelated color draws far more attention than one that
