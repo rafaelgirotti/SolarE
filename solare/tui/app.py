@@ -120,6 +120,8 @@ class SolarEApp(App):
         self._pending_config_path = config_path
         self._pending_auto_start = auto_start
         self._rendered_log_count = 0
+        self._log_render_width: int | None = None  # width every currently-written log line was
+        # wrapped at - see _render_log_panel; None means nothing's been rendered yet
         self._solar_override_active = False  # mirrors the real JobRunner state - see _render_job_panel
         self._solar_poller: SolarPoller | None = None
         self._solar_unavailable_reason: str | None = None
@@ -645,11 +647,21 @@ class SolarEApp(App):
         log = self.query_one("#log_panel", RichLog)
         # Explicit width, not RichLog's own auto-sizing - write()'s default logic only shrinks a
         # line down to the visible area if that's wider than RichLog.min_width (78 columns), so a
-        # panel narrower than 78 still wraps at 78 and needs a horizontal scrollbar regardless of
-        # wrap=True. Passing width= here bypasses that floor entirely (and the tracked "widest
-        # line ever written," which only ever grows - once a wide measurement sneaks in, wrap
-        # alone can't undo it), pinning every line to the panel's real, current width.
+        # panel narrower than 78 still wraps at 78 regardless of wrap=True. Passing width= here
+        # bypasses that floor entirely, pinning every line to the panel's real, current width.
         width = max(1, log.scrollable_content_region.width)
+        if width != self._log_render_width:
+            # The panel's width actually changed (a real terminal resize, or the first render) -
+            # RichLog doesn't reflow what's already written on its own (each line is pre-rendered
+            # into a Strip at write() time and never revisited), so without this, lines wrapped at
+            # the old width just sit there at that width forever. clear() resets RichLog's own
+            # "widest line ever written" tracker back to 0 too - re-writing every line fresh here
+            # is what actually keeps that in sync with reality, rather than a CSS override papering
+            # over whatever stale value it drifts to (see the overflow-x: hidden comment in
+            # theme.tcss, kept as a defensive backstop, not the real fix - this is).
+            log.clear()
+            self._rendered_log_count = 0
+            self._log_render_width = width
         for line in log_lines[self._rendered_log_count :]:
             log.write(line, width=width)
         self._rendered_log_count = len(log_lines)
