@@ -77,6 +77,26 @@ def get_duration(file: Path) -> float:
     return float(result.stdout.strip())
 
 
+def estimate_frame_count(file: Path) -> int:
+    """duration * r_frame_rate - a fast, metadata-only estimate (no decode), not an exact count
+    (`-count_frames` would be exact but requires a full decode, defeating the point of a *fast*
+    pre-check). Good enough for a rough progress estimate; not meant for anything that needs the
+    real, exact number (av1an's own done.json is that, once it's available - see
+    JobRunner._run_item/RunState.estimated_source_frames)."""
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=r_frame_rate",
+            "-of", "csv=p=0", "--", str(file),
+        ],
+        capture_output=True, text=True, check=True,
+    )
+    num, den = result.stdout.strip().split("/")
+    fps = float(num) / float(den)
+    return round(get_duration(file) * fps)
+
+
 def count_streams(file: Path, stream_type: str) -> int:
     result = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", stream_type, "-show_entries", "stream=index", "-of", "csv=p=0", "--", str(file)],

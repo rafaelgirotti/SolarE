@@ -80,6 +80,15 @@ class UpscaleSettings:
     # consumed by script generation (the compiled engine itself determines the real output shape).
     use_cuda_graph: bool = False  # tested with no measurable throughput benefit either way (see
     # tools/vsmlrt.md) - default off for simplicity.
+    scene_detect_fps: float | None = None  # measured upscale-only throughput (frames/sec) for
+    # this exact model+resolution+hardware combination (e.g. from a real benchmark like the one in
+    # tools/vsmlrt.md) - used only to show a rough, explicitly-approximate progress estimate during
+    # av1an's own scene-detection pass, which decodes the whole source through this same filter
+    # chain but reports zero real progress of its own (confirmed empirically - see
+    # history/pitfalls.md). Optional: without it, the dashboard just shows a plain "detecting
+    # scenes..." status with no percentage, same as before this field existed. Deliberately not
+    # auto-benchmarked - a wrong/stale number here is worse than none (a confidently-displayed
+    # estimate that's way off reads as more broken than an honest "we don't know").
 
 
 @dataclass
@@ -244,6 +253,7 @@ def _parse_upscale(entry: dict | None) -> UpscaleSettings | None:
         model=entry["model"],
         scale=entry["scale"],
         use_cuda_graph=entry.get("useCudaGraph", False),
+        scene_detect_fps=entry.get("sceneDetectFps"),
     )
 
 

@@ -24,12 +24,52 @@ _PHASE_BANDS = {
 }
 
 
-def _overall_pct(state: RunState) -> float:
+def _active_seconds(state: RunState, now: datetime.datetime) -> float:
+    """Total active (non-paused, non-solar-gated) wall-clock seconds spent on the current item so
+    far, including whatever's accrued in a currently-open segment. item_active_seconds alone only
+    covers *closed* segments - see RunState's own docstring on why this is accrual-based rather
+    than derived by subtracting pause time from total elapsed."""
+    active_seconds = state.item_active_seconds
+    if state.active_segment_started_at is not None:
+        active_seconds += (now - state.active_segment_started_at).total_seconds()
+    return active_seconds
+
+
+def _scene_detection_estimate(
+    state: RunState, config: TitleConfig, active_seconds: float
+) -> tuple[float, float] | None:
+    """Returns (fraction 0..1, remaining_seconds) - a rough, explicitly-approximate estimate for
+    av1an's own scene-detection pass, built from a fast metadata-only frame-count estimate (see
+    RunState.estimated_source_frames - not av1an's own real count, which isn't available until
+    frames_total is populated) and a real, title-specific measured decode+upscale rate
+    (video.upscale.scene_detect_fps - see that field's own docstring for why this isn't
+    auto-benchmarked). None whenever either piece is missing, which callers treat as "no estimate
+    available" - never a wrong/misleading number standing in for an honest unknown."""
+    upscale = config.video.upscale
+    if upscale is None or not upscale.scene_detect_fps or not state.estimated_source_frames:
+        return None
+    estimated_total_seconds = state.estimated_source_frames / upscale.scene_detect_fps
+    if estimated_total_seconds <= 0:
+        return None
+    # Capped just under 100% - this is an estimate standing in for real progress, not real
+    # progress itself. A real 100%-equivalent here should only ever come from av1an's own
+    # frames_total actually appearing (the caller already switches to that branch once it does) -
+    # letting this drift to/past 100% while still nominally "detecting scenes" would read as done
+    # when it might just mean this particular file is taking a bit longer than the estimate.
+    fraction = min(0.99, active_seconds / estimated_total_seconds)
+    remaining = max(0.0, estimated_total_seconds - active_seconds)
+    return fraction, remaining
+
+
+def _overall_pct(state: RunState, config: TitleConfig, now: datetime.datetime) -> float:
     if state.phase == RunPhase.DONE:
         return 100.0
     low, high = _PHASE_BANDS.get(state.phase, (0.0, 100.0))
     if state.phase == RunPhase.VIDEO_ENCODE and state.frames_total:
         sub_fraction = state.frames_done / state.frames_total
+    elif state.phase == RunPhase.VIDEO_ENCODE:
+        estimate = _scene_detection_estimate(state, config, _active_seconds(state, now))
+        sub_fraction = estimate[0] if estimate is not None else 0.0
     elif state.phase == RunPhase.AUDIO and state.audio_track_count:
         sub_fraction = state.audio_track_index / state.audio_track_count
     else:
@@ -123,13 +163,7 @@ class LiveJobSource:
             # live to look indistinguishable from a genuine hang on a long file with many chunks.
             eta_text = "all chunks done - finalizing (concatenating into the output file)..."
         else:
-            # item_active_seconds only covers *closed* segments - the currently-open one (this
-            # branch only runs while actively encoding, so one should be open) isn't in there yet,
-            # same reasoning as pause_started_at not being folded into item_paused_seconds until
-            # its window closes.
-            active_seconds = state.item_active_seconds
-            if state.active_segment_started_at is not None:
-                active_seconds += (now - state.active_segment_started_at).total_seconds()
+            active_seconds = _active_seconds(state, now)
             if state.frames_done > 5 and active_seconds > 5 and state.frames_total:
                 rate = active_seconds / state.frames_done
                 remaining = rate * max(0, state.frames_total - state.frames_done)
@@ -148,12 +182,18 @@ class LiveJobSource:
                 # inferred, signal: av1an is still decoding the *entire* source through the full
                 # filter chain (crop/upscale included, if configured - see preprocess.py) purely
                 # to find scene-cut boundaries, before a single real encode chunk has even been
-                # defined. Confirmed live: this can take real, non-trivial minutes on a long
-                # title with an upscale filter in the pipeline (the whole file gets decoded
-                # through TensorRT once here, then again per-chunk during actual encoding) -
-                # showing "calculating..." through this whole window read as a stuck/generic
-                # placeholder when what's actually happening is a specific, nameable step.
-                eta_text = f"detecting scenes / splitting into chunks... - {state.phase.value}"
+                # defined. Confirmed live (a real run, stderr captured directly): av1an prints
+                # zero incremental progress of its own for this pass, not even a percentage - so
+                # any estimate here has to come from data solare has independently, not from av1an.
+                estimate = _scene_detection_estimate(state, self._config, active_seconds)
+                if estimate is not None:
+                    fraction, remaining = estimate
+                    eta_text = (
+                        f"detecting scenes/splitting (~{fraction * 100:.0f}%, "
+                        f"~{_format_duration(remaining)} left, rough estimate) - {state.phase.value}"
+                    )
+                else:
+                    eta_text = f"detecting scenes / splitting into chunks... - {state.phase.value}"
             else:
                 eta_text = f"calculating... - {state.phase.value}"
 
@@ -219,7 +259,7 @@ class LiveJobSource:
             active_chunks=active_chunks,
             waiting_for_solar=state.waiting_for_solar,
             solar_override=state.solar_override,
-            overall_pct=_overall_pct(state),
+            overall_pct=_overall_pct(state, self._config, now),
         )
 
 

@@ -19,6 +19,7 @@ from __future__ import annotations
 import copy
 import datetime
 import shutil
+import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
@@ -33,7 +34,7 @@ from solare.engine.dolby_vision import inject_rpu
 from solare.engine.integrity import check_output_integrity
 from solare.engine.mux import mux_episode, resolve_subtitle_sources
 from solare.engine.queue import QueueItem, build_queue, clean_title
-from solare.engine import timing
+from solare.engine import ffprobe, timing
 from solare.solar import SolarPoller
 
 _POLL_INTERVAL_SECONDS = 1.0
@@ -59,6 +60,11 @@ class RunState:
     # alone (a display string) isn't enough to link back to the real file
     frames_done: int = 0  # av1an's done.json is frame-based, not chunk-based - see
     frames_total: int = 0  # ChunkProgress/ActiveChunkInfo for real per-chunk tracking
+    estimated_source_frames: int | None = None  # a fast, metadata-only ffprobe estimate (not
+    # av1an's own real count, which isn't available until frames_total above is populated) - only
+    # ever computed/used when video.upscale.scene_detect_fps is set, to show a rough progress
+    # estimate during av1an's scene-detection pass (see live_job.py) - None otherwise, including
+    # while frames_total is still 0 for a title with no upscale/no benchmark configured.
     chunk_progress: ChunkProgress | None = None
     paused: bool = False  # user-requested, via pause()
     solar_paused: bool = False  # auto, via solarGate - independent of the above, see module docstring
@@ -263,6 +269,7 @@ class JobRunner:
                 self._state.current_item_src_path = str(item.src_file)
                 self._state.frames_done = 0
                 self._state.frames_total = 0
+                self._state.estimated_source_frames = None
                 self._state.chunk_progress = None
                 self._state.finalizing = False
                 self._state.audio_track_index = 0
@@ -315,6 +322,18 @@ class JobRunner:
         self._av1an = Av1anRunner(
             self._config, item.src_file, video_tmp, temp_dir, chunk_method=self._config.video.chunk_method
         )
+        estimated_source_frames = None
+        upscale = self._config.video.upscale
+        if upscale is not None and upscale.scene_detect_fps:
+            # Only bothers with this fast metadata-only probe when it'll actually be used (see
+            # live_job.py) - no point paying even a cheap ffprobe call for every title when most
+            # won't have scene_detect_fps set at all.
+            try:
+                estimated_source_frames = ffprobe.estimate_frame_count(item.src_file)
+            except (subprocess.CalledProcessError, ValueError, ZeroDivisionError) as e:
+                self._log(f"couldn't estimate source frame count for scene-detection progress: {e}")
+        with self._lock:
+            self._state.estimated_source_frames = estimated_source_frames
         self._wait_for_solar_gate_before_start()
         if self._stop.is_set():
             return
