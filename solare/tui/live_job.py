@@ -141,6 +141,19 @@ class LiveJobSource:
                 # bar's number rather than just repeating it - fixed, then found redundant even
                 # once fixed.
                 eta_text = f"{_format_eta(remaining, eta_time, now)} - {state.phase.value}"
+            elif not state.frames_total:
+                # av1an's own done.json only reports a real "frames" total once it has finished
+                # scene-detection/chunk-splitting - Av1anRunner.get_progress() already returns
+                # None (leaving frames_total at 0) until then, so this is a genuine, not
+                # inferred, signal: av1an is still decoding the *entire* source through the full
+                # filter chain (crop/upscale included, if configured - see preprocess.py) purely
+                # to find scene-cut boundaries, before a single real encode chunk has even been
+                # defined. Confirmed live: this can take real, non-trivial minutes on a long
+                # title with an upscale filter in the pipeline (the whole file gets decoded
+                # through TensorRT once here, then again per-chunk during actual encoding) -
+                # showing "calculating..." through this whole window read as a stuck/generic
+                # placeholder when what's actually happening is a specific, nameable step.
+                eta_text = f"detecting scenes / splitting into chunks... - {state.phase.value}"
             else:
                 eta_text = f"calculating... - {state.phase.value}"
 
