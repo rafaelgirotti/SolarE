@@ -8,10 +8,10 @@ VapourSynth is the one dependency that can't be bundled in `tools/` - it needs a
 install plus its own chunking plugins (`lsmas`/`ffms2`/`bs`/`vszip`/`julek` via `vsrepo`), verified
 directly against a real encode end to end. See the README's Requirements section.
 
-If `video.deinterlace`/`video.speedCorrection` is configured, av1an's own `-i` points at a
-generated VapourSynth script (see engine/preprocess.py) instead of the raw source file - av1an
-accepts a `.vpy` script as input directly, so chunking/encoding reads straight off the filtered
-output with no separate full-file transcode pass.
+If `video.deinterlace`/`video.speedCorrection`/`video.upscale` is configured, av1an's own `-i`
+points at a generated VapourSynth script (see engine/preprocess.py) instead of the raw source
+file - av1an accepts a `.vpy` script as input directly, so chunking/encoding reads straight off
+the filtered output with no separate full-file transcode pass.
 """
 
 from __future__ import annotations
@@ -103,7 +103,10 @@ class Av1anRunner:
         ]
         if video.pix_fmt:
             args += ["--pix-format", video.pix_fmt]
-        if video.crop:
+        if video.crop and video.upscale is None:
+            # When upscale is set, crop is already applied inside the generated .vpy script
+            # (ahead of the upscale filter, which needs the cropped frame) - see preprocess.py.
+            # Passing this flag too would crop twice.
             args += ["-f", f"-vf crop={video.crop}"]
         # done.json only exists once a real prior run has made progress - a better resumability
         # signal than bare directory existence, which __init__ now creates unconditionally (needed

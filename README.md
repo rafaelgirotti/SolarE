@@ -57,6 +57,14 @@ manual toggle uses. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for desig
     nnedi3_resample nnedi3_weights fmtc znedi3`, plus `pip install vsutil` (havsfunc's one
     pure-Python dependency, not a `vsrepo` package) into VapourSynth's own Python. Not needed
     unless a title actually uses `deinterlace`.
+  - For AI upscaling (`video.upscale` in a title config): [vs-mlrt](https://github.com/AmusementClub/vs-mlrt)'s
+    `vstrt`/`vsncnn` plugin files placed into that same VapourSynth's own plugins directory (same
+    OS-level-registration reason as VapourSynth itself above - not something `tools/` PATH-prepend
+    can do), a matching-version TensorRT runtime, and a TensorRT engine pre-built for the exact
+    title's post-crop resolution. See [`../tools/vsmlrt.md`](../tools/vsmlrt.md) and
+    [`../tools/cuda-tensorrt.md`](../tools/cuda-tensorrt.md) for the full setup and the real
+    gotchas found doing it the first time - genuinely more involved than the other tools here, not
+    a quick `vsrepo install`. Not needed unless a title actually uses `upscale`.
 
   **Convenience**: drop any of the above (except VapourSynth) into `<name>/` under a shared
   `tools/` directory one level up from this project (i.e. a sibling of every project that wants

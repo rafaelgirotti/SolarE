@@ -63,6 +63,26 @@ def _parse_fps_fraction(fps: str) -> float:
 
 
 @dataclass
+class UpscaleSettings:
+    """TensorRT AI upscale (vs-mlrt's `vstrt` backend), applied as a VapourSynth preprocessing
+    pass ahead of av1an's own chunking/encoding - see engine/preprocess.py. Requires `crop` (on
+    the enclosing VideoSettings) to be set: the TensorRT engine is a fixed-shape compiled
+    artifact, built once for one exact post-crop resolution (see ../../../tools/vsmlrt.md) -
+    there's no source-resolution probing to infer it automatically. The engine file itself must
+    already exist (built via `trtexec`, see the same doc) - solare verifies it's there and raises
+    a clear error with the exact build command if not, rather than building it on the fly."""
+
+    model: str  # e.g. "2x_AnimeJaNai_HD_V3Sharp1_SuperUltraCompact" - the .onnx filename (no
+    # extension) under tools/vsmlrt/models/RealESRGANv2/; also names the expected cached
+    # .engine file (see preprocess.py's engine_path()).
+    scale: int  # linear scale factor the model itself performs (e.g. 2 for the model above) -
+    # not inferred from the model name string (fragile) - self-documenting only for now, not
+    # consumed by script generation (the compiled engine itself determines the real output shape).
+    use_cuda_graph: bool = False  # tested with no measurable throughput benefit either way (see
+    # tools/vsmlrt.md) - default off for simplicity.
+
+
+@dataclass
 class VideoSettings:
     codec: str
     preset: str
@@ -77,6 +97,7 @@ class VideoSettings:
     # output file); needed to resume progress sitting in a folder outside that naming convention
     deinterlace: DeinterlaceSettings | None = None
     speed_correction: SpeedCorrection | None = None
+    upscale: UpscaleSettings | None = None
 
 
 @dataclass
@@ -216,6 +237,16 @@ def _parse_speed_correction(entry: dict | None) -> SpeedCorrection | None:
     return SpeedCorrection(source_fps=entry["sourceFps"], target_fps=entry["targetFps"])
 
 
+def _parse_upscale(entry: dict | None) -> UpscaleSettings | None:
+    if entry is None:
+        return None
+    return UpscaleSettings(
+        model=entry["model"],
+        scale=entry["scale"],
+        use_cuda_graph=entry.get("useCudaGraph", False),
+    )
+
+
 def _parse_solar_gate(entry: dict | None) -> SolarGate | None:
     if entry is None:
         return None
@@ -240,6 +271,7 @@ def load_config(path: str | Path) -> TitleConfig:
         temp_dir=video_data.get("tempDir"),
         deinterlace=_parse_deinterlace(video_data.get("deinterlace")),
         speed_correction=_parse_speed_correction(video_data.get("speedCorrection")),
+        upscale=_parse_upscale(video_data.get("upscale")),
     )
 
     source = data["source"]

@@ -25,7 +25,8 @@
     "chunkMethod": "lsmash",
     "tempDir": null,
     "deinterlace": null,
-    "speedCorrection": null
+    "speedCorrection": null,
+    "upscale": null
   },
   "audio": {
     "sourceLanguage": "jpn",

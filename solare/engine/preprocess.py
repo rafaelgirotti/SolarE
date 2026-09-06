@@ -1,20 +1,27 @@
-"""Generates a VapourSynth preprocessing script (deinterlace and/or speed correction) that av1an
-consumes directly as its own -i input - confirmed directly against av1an's own --help ("Can be a
-video or VapourSynth (.py, .vpy) script"), so chunking/encoding reads straight off the filtered
-output with no separate full-file transcode pass and no intermediate file written to disk.
+"""Generates a VapourSynth preprocessing script (deinterlace, speed correction, and/or AI upscale)
+that av1an consumes directly as its own -i input - confirmed directly against av1an's own --help
+("Can be a video or VapourSynth (.py, .vpy) script"), so chunking/encoding reads straight off the
+filtered output with no separate full-file transcode pass and no intermediate file written to disk.
 
 QTGMC (havsfunc) needs a real dependency chain installed into the system VapourSynth (not
 solare's own uv-managed venv, which never imports vapoursynth directly - see toolpath.py):
 `vsrepo install havsfunc mvsfunc mv rgvs nnedi3 nnedi3_resample nnedi3_weights fmtc znedi3`, plus
 `pip install vsutil` (havsfunc's one pure-Python dependency, not a vsrepo package) into that same
 system Python. See the README's Requirements section.
+
+Upscale (vs-mlrt's TensorRT `vstrt` backend) needs `vstrt.dll`/`vsncnn.dll` and the model .onnx
+files already placed inside that same system VapourSynth's own plugins directory (same
+non-PATH-based reason QTGMC's plugins need `vsrepo`, not toolpath.py's PATH-prepend), plus a
+pre-built TensorRT engine for the exact post-crop resolution in use - see ../../../tools/vsmlrt.md
+and this module's engine_path()/_require_upscale_engine().
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from solare.engine.config import TitleConfig
+from solare.engine.config import TitleConfig, UpscaleSettings
+from solare.engine.toolpath import shared_tools_root
 
 _LOADERS = {
     "bestsource": "core.bs.VideoSource",
@@ -24,7 +31,41 @@ _LOADERS = {
 
 
 def needs_preprocessing(config: TitleConfig) -> bool:
-    return config.video.deinterlace is not None or config.video.speed_correction is not None
+    return (
+        config.video.deinterlace is not None
+        or config.video.speed_correction is not None
+        or config.video.upscale is not None
+    )
+
+
+def _parse_crop(crop: str) -> tuple[int, int, int, int]:
+    """`video.crop` is the same "w:h:x:y" shape ffmpeg's own `-vf crop=` filter takes (that's
+    where it normally goes - see av1an.py's build_args()) - reused as-is here rather than
+    inventing a second crop format, since it means the same value."""
+    w, h, x, y = (int(v) for v in crop.split(":"))
+    return w, h, x, y
+
+
+def engine_path(model: str, width: int, height: int) -> Path:
+    """Where a TensorRT engine for `model` at this exact post-crop resolution is expected to
+    live - a fixed convention, not something read from config (keeps the JSON free of per-machine
+    absolute paths, matching every other shared-tools reference in this codebase)."""
+    return shared_tools_root() / "vsmlrt" / "vstrt" / f"{model}_{width}x{height}.engine"
+
+
+def _require_upscale_engine(upscale: UpscaleSettings, width: int, height: int) -> Path:
+    path = engine_path(upscale.model, width, height)
+    if not path.is_file():
+        onnx = shared_tools_root() / "vsmlrt" / "models" / "RealESRGANv2" / f"{upscale.model}.onnx"
+        raise FileNotFoundError(
+            f"upscale engine not found: {path}\n"
+            f"Build it once via trtexec (see tools/vsmlrt.md):\n"
+            f"  trtexec --onnx={onnx} --saveEngine={path} --fp16 "
+            f"--minShapes=input:1x3x{height}x{width} "
+            f"--optShapes=input:1x3x{height}x{width} "
+            f"--maxShapes=input:1x3x{height}x{width}"
+        )
+    return path
 
 
 def _cache_kwarg(chunk_method: str, cache_dir: Path, src_file: Path) -> str:
@@ -45,9 +86,17 @@ def _cache_kwarg(chunk_method: str, cache_dir: Path, src_file: Path) -> str:
 
 def generate_vpy(config: TitleConfig, src_file: Path, out_vpy: Path, chunk_method: str) -> Path:
     """Write a .vpy script that loads src_file through the same underlying VapourSynth source
-    plugin the configured chunk method would otherwise use directly, then applies deinterlacing
-    and/or speed correction as configured. Raises ValueError for a chunk method with no
-    VapourSynth-plugin loader (hybrid/select/segment/dgdecnv) - preprocessing needs one."""
+    plugin the configured chunk method would otherwise use directly, then applies (in this fixed
+    order) crop+upscale, deinterlacing, and speed correction, as configured. Raises ValueError for
+    a chunk method with no VapourSynth-plugin loader (hybrid/select/segment/dgdecnv) - preprocessing
+    needs one.
+
+    Upscale runs first, ahead of deinterlace, because crop+upscale's whole reason for living in
+    this script is TensorRT's fixed-shape engine (see engine_path()) - nothing else here has that
+    constraint. No title combines deinterlace with upscale yet, so this ordering is untested for
+    that combination and is real wasted work if it ever happens (QTGMC would run on the already-4x
+    -larger frame) - worth revisiting (deinterlace before upscale instead) if that combination is
+    ever actually needed, not preemptively solved here."""
     loader = _LOADERS.get(chunk_method)
     if loader is None:
         raise ValueError(
@@ -63,6 +112,34 @@ def generate_vpy(config: TitleConfig, src_file: Path, out_vpy: Path, chunk_metho
         "",
         f'clip = {loader}(r"{src_file}"{cache_kwarg})',
     ]
+
+    if video.upscale is not None:
+        # Crop moves into the script (applied here, ahead of everything else) only in this branch
+        # - av1an.py's build_args() skips its own ffmpeg-side `-vf crop=` flag whenever upscale is
+        # set, specifically to avoid double-cropping. Every other title keeps today's ffmpeg-side
+        # crop untouched. The TensorRT engine needs the *cropped* frame: it's a fixed-shape
+        # compiled artifact built for one exact resolution (see engine_path()) - upscale requires
+        # `crop` to be set for exactly this reason, checked here rather than left to a confusing
+        # failure inside vs-mlrt/TensorRT later.
+        if not video.crop:
+            raise ValueError(
+                "video.upscale requires video.crop to be set - the TensorRT engine is built for "
+                "one exact post-crop resolution, so it can't be inferred from the raw source."
+            )
+        w, h, x, y = _parse_crop(video.crop)
+        lines.append(f"clip = core.std.CropAbs(clip, width={w}, height={h}, left={x}, top={y})")
+
+        path = _require_upscale_engine(video.upscale, w, h)
+        lines.append('clip = core.resize.Bicubic(clip, format=vs.RGBS, matrix_in_s="709")')
+        lines.append(
+            f'clip = core.trt.Model(clip, engine_path=r"{path}", '
+            f"use_cuda_graph={video.upscale.use_cuda_graph})"
+        )
+        # Deliberately back to plain 8-bit YUV, not video.pix_fmt directly - av1an's own
+        # `--pix-format` flag (already set from video.pix_fmt in av1an.py's build_args(), applied
+        # regardless of what this script outputs) handles the final bit-depth conversion, exactly
+        # as it already does for every other title whether or not this script runs at all.
+        lines.append('clip = core.resize.Bicubic(clip, format=vs.YUV420P8, matrix_s="709")')
 
     if video.deinterlace is not None:
         d = video.deinterlace

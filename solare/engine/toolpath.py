@@ -33,14 +33,20 @@ from pathlib import Path
 
 from solare import platform as solare_platform
 
-_TOOL_SUBDIRS = ["av1an", "ffmpeg", "x265", "svt-av1", "mkvtoolnix", "dovi_tool"]
+_TOOL_SUBDIRS = ["av1an", "ffmpeg", "x265", "svt-av1", "mkvtoolnix", "dovi_tool", "cuda-tensorrt"]
+# "vsmlrt" is deliberately NOT in this list, same reasoning as VapourSynth itself below: vstrt.dll/
+# vsncnn.dll and the model .onnx files must live inside VapourSynth's own registered plugins
+# directory (VapourSynth only autoloads from there, not from PATH) - a PATH-prepend can't make
+# that happen. See tools/vsmlrt.md / tools/README.md for that manual setup. "cuda-tensorrt" *is*
+# PATH-based (trtexec and the TensorRT runtime DLLs are found via PATH, confirmed directly) - only
+# vsmlrt's own plugin files need the different, non-PATH mechanism.
 
 
 def _project_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def _shared_tools_root() -> Path:
+def shared_tools_root() -> Path:
     """The workspace-level shared tools directory, a sibling of this project itself - computed
     relative to _project_root()'s own parent rather than a hardcoded drive/username, so this
     still resolves correctly if the whole workspace ever moves."""
@@ -54,7 +60,7 @@ def prepend_local_tools_to_path() -> list[Path]:
     logging - call once, early, before launching any external tool."""
     found = []
     for name in _TOOL_SUBDIRS:
-        for root in (_project_root() / "tools", _shared_tools_root()):
+        for root in (_project_root() / "tools", shared_tools_root()):
             candidate = root / name
             if candidate.is_dir():
                 found.append(candidate)
