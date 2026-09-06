@@ -10,6 +10,7 @@ from solare.engine.config import (
     SpeedCorrection,
     Subtitle,
     TitleConfig,
+    UpscaleSettings,
     VideoSettings,
     load_config,
 )
@@ -40,6 +41,7 @@ __all__ = [
     "Subtitle",
     "SubtitleSource",
     "TitleConfig",
+    "UpscaleSettings",
     "VideoSettings",
     "load_config",
     "QueueItem",

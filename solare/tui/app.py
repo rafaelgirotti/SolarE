@@ -690,17 +690,38 @@ def _format_seconds(seconds: float) -> str:
 
 
 def run() -> None:
+    parser = argparse.ArgumentParser(prog="solare", description="SolarE dashboard")
+    parser.add_argument("--config", type=str, default=None, help="Title config .json to load on startup")
+    parser.add_argument("--start", action="store_true", help="Start immediately (requires --config)")
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run without the Textual dashboard - plain log lines to stdout, no live terminal "
+        "rendering required. Implies --start; requires --config. Real exit code: 0 success, "
+        "1 failure, 130 on Ctrl+C.",
+    )
+    args = parser.parse_args()
+    if args.start and not args.config:
+        parser.error("--start requires --config")
+    if args.headless and not args.config:
+        parser.error("--headless requires --config")
+
+    if args.headless:
+        # Deliberately dispatches before touching anything Textual-related below (App
+        # instantiation, set_console_title's own terminal-title write) - this whole branch is
+        # for exactly the case where there might not be a real terminal at all (stdout piped/
+        # redirected to a file, no TTY), see solare/cli.py's own docstring for why.
+        import sys
+
+        from solare.cli import run_headless
+
+        sys.exit(run_headless(args.config))
+
     prepend_local_tools_to_path()
     # Set once, early, before Textual takes over the screen - the title persists in the terminal's
     # own window/tab state regardless of what Textual does with the content area afterward, so
     # this doesn't need to run again on every refresh tick.
     solare_platform.set_console_title("SolarE")
-    parser = argparse.ArgumentParser(prog="solare", description="SolarE dashboard")
-    parser.add_argument("--config", type=str, default=None, help="Title config .json to load on startup")
-    parser.add_argument("--start", action="store_true", help="Start immediately (requires --config)")
-    args = parser.parse_args()
-    if args.start and not args.config:
-        parser.error("--start requires --config")
     SolarEApp(config_path=args.config, auto_start=args.start).run()
 
 
