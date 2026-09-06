@@ -26,7 +26,7 @@ _POLL_INTERVAL_SECONDS = 1.0
 _CREDENTIALS_PATH = Path(__file__).resolve().parent.parent / "credentials.json"
 
 
-def run_headless(config_path: str) -> int:
+def run_headless(config_path: str, skip_solar_gate: bool = False) -> int:
     """Returns a real process exit code (0 success, 1 failure, 130 on Ctrl+C - the conventional
     128+SIGINT - matching normal CLI conventions so a wrapping script can check $?/errorlevel
     without parsing log text)."""
@@ -52,6 +52,14 @@ def run_headless(config_path: str) -> int:
         if solar_poller is not None:
             solar_poller.stop()
         return 1
+    if skip_solar_gate:
+        # Set before start() - _solar_override is a plain threading.Event, safe to set before the
+        # background thread even exists, which avoids any race against
+        # _wait_for_solar_gate_before_start()'s own check (it re-polls every second regardless, so
+        # setting this after start() would only cost up to ~1s, but there's no reason to accept
+        # even that when setting it first is just as easy and race-free by construction).
+        runner.set_solar_override(True)
+        print("solar gating skipped (--skip-solar-gate)", flush=True)
     runner.start()
 
     logged_count = 0

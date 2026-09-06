@@ -111,7 +111,12 @@ class SolarEApp(App):
         ("q", "quit", "Exit"),
     ]
 
-    def __init__(self, config_path: str | Path | None = None, auto_start: bool = False) -> None:
+    def __init__(
+        self,
+        config_path: str | Path | None = None,
+        auto_start: bool = False,
+        skip_solar_gate: bool = False,
+    ) -> None:
         super().__init__()
         self._hw_monitor = HardwareMonitor()
         self._job_source: LiveJobSource | None = None
@@ -119,6 +124,7 @@ class SolarEApp(App):
         self._phase = AppPhase.IDLE
         self._pending_config_path = config_path
         self._pending_auto_start = auto_start
+        self._skip_solar_gate = skip_solar_gate
         self._rendered_log_count = 0
         self._log_render_width: int | None = None  # width every currently-written log line was
         # wrapped at - see _render_log_panel; None means nothing's been rendered yet
@@ -248,11 +254,19 @@ class SolarEApp(App):
         except (OSError, FileNotFoundError, RuntimeError) as e:
             self.notify(f"Couldn't start: {e}", severity="error")
             return
+        if self._skip_solar_gate:
+            # Set before start() - see solare/cli.py's identical comment on why this ordering is
+            # deliberate (race-free by construction, not just "close enough"). Only honored once,
+            # here - a config's own solarGate should apply normally to any *later* item/run this
+            # same dashboard process goes on to load, not stay silently overridden forever because
+            # of a command-line flag passed for a completely different job.
+            runner.set_solar_override(True)
+            self._skip_solar_gate = False
         runner.start()
         record_last_config(self._config.path)
         self._job_source = LiveJobSource(self._config, runner)
         self._rendered_log_count = 0
-        self._solar_override_active = False
+        self._solar_override_active = runner.get_state().solar_override
         self._phase = AppPhase.RUNNING
         self._update_controls()
 
@@ -700,11 +714,19 @@ def run() -> None:
         "rendering required. Implies --start; requires --config. Real exit code: 0 success, "
         "1 failure, 130 on Ctrl+C.",
     )
+    parser.add_argument(
+        "--skip-solar-gate",
+        action="store_true",
+        help="Skip the config's solarGate (if any) for this run, same as toggling it off in the "
+        "dashboard, without needing to do that by hand after launch. Requires --config.",
+    )
     args = parser.parse_args()
     if args.start and not args.config:
         parser.error("--start requires --config")
     if args.headless and not args.config:
         parser.error("--headless requires --config")
+    if args.skip_solar_gate and not args.config:
+        parser.error("--skip-solar-gate requires --config")
 
     if args.headless:
         # Deliberately dispatches before touching anything Textual-related below (App
@@ -715,14 +737,16 @@ def run() -> None:
 
         from solare.cli import run_headless
 
-        sys.exit(run_headless(args.config))
+        sys.exit(run_headless(args.config, skip_solar_gate=args.skip_solar_gate))
 
     prepend_local_tools_to_path()
     # Set once, early, before Textual takes over the screen - the title persists in the terminal's
     # own window/tab state regardless of what Textual does with the content area afterward, so
     # this doesn't need to run again on every refresh tick.
     solare_platform.set_console_title("SolarE")
-    SolarEApp(config_path=args.config, auto_start=args.start).run()
+    SolarEApp(
+        config_path=args.config, auto_start=args.start, skip_solar_gate=args.skip_solar_gate
+    ).run()
 
 
 if __name__ == "__main__":
