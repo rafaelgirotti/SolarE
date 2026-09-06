@@ -8,18 +8,54 @@ rather than under tui/.
 from __future__ import annotations
 
 import datetime
+import queue
 import threading
 
 from solare.solar import cache
 from solare.solar.client import GenerationSummary, GrowattClient, GrowattCredentials
 
 POLL_INTERVAL_SECONDS = 60.0
+# growattServer's requests.Session (base_api.py) never passes timeout= on any call - confirmed by
+# reading its source, not assumed. Python's requests has no default timeout, so a network hiccup
+# that accepts the connection but never responds hangs the call forever. Confirmed live: a real
+# poll got stuck this way and stayed stale for hours, with the app only recovering after being
+# killed and restarted - the polling loop was blocked inside the try, never reaching the except,
+# never reaching the next scheduled retry. This is the ceiling on how long one poll attempt can
+# block before being treated as failed - generous over a normal few-second round trip, comfortably
+# under POLL_INTERVAL_SECONDS so a timed-out attempt doesn't run into the next scheduled one.
+POLL_TIMEOUT_SECONDS = 30.0
 # How old a reading (disk-cached or from an earlier live poll) can be and still be trusted for a
 # gating decision - past this, is_producing() reports "unknown" (None) rather than confidently
 # reusing a number that may no longer reflect reality. 10 minutes: long enough to bridge a
 # restart landing mid-outage or a few consecutive missed polls, short enough that it's still a
 # real, recent reading of actual conditions, not a guess.
 MAX_READING_AGE_SECONDS = 600.0
+
+
+def _poll_with_timeout(client: GrowattClient, timeout: float) -> GenerationSummary:
+    """Runs the real API call on its own throwaway daemon thread and waits up to `timeout` for
+    it, rather than calling it directly on the polling loop's own thread. A fresh thread per
+    attempt (not a reused worker pool) matters: if this attempt's call is the one that hangs,
+    giving up on it after `timeout` must not block the *next* scheduled attempt from getting its
+    own genuinely fresh try. The abandoned thread just keeps running harmlessly in the background
+    (a leaked daemon thread, nothing waits on it) until it eventually resolves or the process
+    exits - there's no way to forcibly cancel an in-flight requests call from outside it."""
+    result: queue.Queue = queue.Queue(maxsize=1)
+
+    def worker() -> None:
+        try:
+            result.put(("ok", client.get_generation_summary()))
+        except Exception as e:  # noqa: BLE001 - forwarded to the caller via the queue, not swallowed
+            result.put(("error", e))
+
+    threading.Thread(target=worker, daemon=True, name="solar-poll-attempt").start()
+    try:
+        status, value = result.get(timeout=timeout)
+    except queue.Empty:
+        raise TimeoutError(f"Growatt poll timed out after {timeout:.0f}s") from None
+    if status == "error":
+        raise value
+    return value
 
 
 class SolarPoller:
@@ -44,7 +80,7 @@ class SolarPoller:
     def _run(self) -> None:
         while not self._stop.is_set():
             try:
-                summary = self._client.get_generation_summary()
+                summary = _poll_with_timeout(self._client, POLL_TIMEOUT_SECONDS)
                 checked_at = datetime.datetime.now()
                 with self._lock:
                     self._summary = summary
