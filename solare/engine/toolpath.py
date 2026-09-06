@@ -1,10 +1,17 @@
 """Local encoder tool discovery - see the README's Requirements section.
 
-If a `tools/<name>/` directory exists next to the project (gitignored, never committed - large,
-platform-specific, often GPL-licensed binaries don't belong in this repo), its path is prepended
-to PATH so `av1an`/`ffmpeg`/etc. resolve without a global PATH change. This is pure convenience -
-if `tools/` doesn't exist, or a given subdirectory isn't there, whatever's already on PATH is
-used unchanged.
+Checks two places for each tool, in order, before falling back to whatever's already on PATH:
+
+1. This project's own `tools/<name>/` (gitignored, never committed) - an intentional per-project
+   override/pin, e.g. if solare ever needs a different build/version than other projects share.
+2. `D:\\Workspaces\\tools\\<name>\\` (or wherever this project's own parent workspace directory
+   is - not hardcoded) - shared across every project under the same workspace, so ffmpeg/av1an/
+   etc. don't need a separate multi-hundred-MB copy per project (solare and img-enc were both
+   independently vendoring the same ffmpeg build before this). See that directory's own README
+   for the convention.
+
+This is pure convenience either way - if a tool isn't found in either location, whatever's
+already on PATH is used unchanged.
 
 VapourSynth is deliberately NOT in this list. Verified directly: a byte-for-byte copy of a working
 VapourSynth install, relocated to a plain tools/vapoursynth/ folder, fails ("Failed to get
@@ -33,12 +40,25 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _shared_tools_root() -> Path:
+    """The workspace-level shared tools directory, a sibling of this project itself - computed
+    relative to _project_root()'s own parent rather than a hardcoded drive/username, so this
+    still resolves correctly if the whole workspace ever moves."""
+    return _project_root().parent / "tools"
+
+
 def prepend_local_tools_to_path() -> list[Path]:
-    """Prepend any existing tools/<name>/ directories, plus the registered VapourSynth install's
-    own directory if found, to PATH. Returns the ones actually found, for logging - call once,
-    early, before launching any external tool."""
-    tools_root = _project_root() / "tools"
-    found = [tools_root / name for name in _TOOL_SUBDIRS if (tools_root / name).is_dir()]
+    """Prepend any existing tools/<name>/ directories - this project's own first (an intentional
+    per-project override/pin), the shared workspace-level one otherwise - plus the registered
+    VapourSynth install's own directory if found, to PATH. Returns the ones actually found, for
+    logging - call once, early, before launching any external tool."""
+    found = []
+    for name in _TOOL_SUBDIRS:
+        for root in (_project_root() / "tools", _shared_tools_root()):
+            candidate = root / name
+            if candidate.is_dir():
+                found.append(candidate)
+                break  # project-local override wins over the shared default, not both
     vs_dir = solare_platform.vapoursynth_dll_dir()
     if vs_dir is not None:
         found.append(vs_dir)

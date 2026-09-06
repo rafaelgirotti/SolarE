@@ -58,9 +58,14 @@ manual toggle uses. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for desig
     pure-Python dependency, not a `vsrepo` package) into VapourSynth's own Python. Not needed
     unless a title actually uses `deinterlace`.
 
-  **Convenience**: drop any of the above (except VapourSynth) into `tools/<name>/` next to this
-  project (e.g. `tools/ffmpeg/ffmpeg.exe`) and `solare` prepends them to `PATH` automatically - no
-  global install needed. `tools/` is gitignored; nothing in it is ever committed (these are large,
+  **Convenience**: drop any of the above (except VapourSynth) into `<name>/` under a shared
+  `tools/` directory one level up from this project (i.e. a sibling of every project that wants
+  the same tools - `../tools/ffmpeg/ffmpeg.exe`, `../tools/av1an/av1an.exe`, etc.) and `solare`
+  prepends them to `PATH` automatically - no global install needed, and no separate copy per
+  project either. See that directory's own README for the convention. A project-local
+  `tools/<name>/` (directly next to this project, not the shared one) still works too, and takes
+  priority over the shared copy - useful for pinning a different build/version just for solare.
+  Either location is gitignored; nothing in either is ever committed (these are large,
   platform-specific, often GPL-licensed binaries that don't belong in a git history).
 - Optional, only if you want solar generation monitoring: a [Growatt](https://www.growatt.com/)
   inverter reachable via their cloud API (`--extra solar`).
