@@ -274,6 +274,19 @@ class LiveJobSource:
         )
 
 
+def _safe_size(f: Path) -> int:
+    """f.stat().st_size, tolerating the file vanishing between listing and stat - a real race,
+    not a hypothetical one: confirmed live, av1an deletes a chunk's .hevc/.ivf out of its own
+    --temp/encode dir right after folding it into the final concat, and this function's caller
+    can be mid-iteration over that same directory at that exact moment (this runs on every
+    dashboard poll tick, with av1an's own process doing this cleanup concurrently) - crashed the
+    whole app with an uncaught FileNotFoundError before this guard existed."""
+    try:
+        return f.stat().st_size
+    except FileNotFoundError:
+        return 0
+
+
 def _sum_output_size_gb(output_root: Path, current_temp_dir: str = "") -> float:
     """Finished .mkv files under output_root, plus - if an item is currently encoding - the
     already-encoded chunks sitting in its av1an --temp dir (av1an-temp/encode/*). Without the
@@ -282,11 +295,15 @@ def _sum_output_size_gb(output_root: Path, current_temp_dir: str = "") -> float:
     end, even though real, sizeable chunk data has been accumulating on disk the entire time."""
     total = 0
     if output_root.exists():
-        total += sum(f.stat().st_size for f in output_root.rglob("*.mkv") if f.is_file())
+        total += sum(_safe_size(f) for f in output_root.rglob("*.mkv") if f.is_file())
     if current_temp_dir:
         encode_dir = Path(current_temp_dir) / "encode"
         if encode_dir.is_dir():
-            total += sum(f.stat().st_size for f in encode_dir.iterdir() if f.is_file())
+            try:
+                entries = list(encode_dir.iterdir())
+            except FileNotFoundError:
+                entries = []
+            total += sum(_safe_size(f) for f in entries if f.is_file())
     return round(total / (1024**3), 2)
 
 
