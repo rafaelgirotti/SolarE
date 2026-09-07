@@ -73,12 +73,26 @@ class GrowattClient:
             raise RuntimeError(f"Growatt login failed: {response.get('msg')}")
         self._logged_in = True
 
+    def _call(self, fn, *args, **kwargs):
+        """Runs an already-logged-in API call, resetting the cached login state on any failure -
+        confirmed live as a real bug otherwise: the Growatt server-side session expires on its own
+        schedule (independent of this process), and without this reset `_ensure_login()` keeps
+        short-circuiting on the stale `_logged_in=True` forever, so every poll fails identically
+        from that point until the app is restarted (observed as a solid multi-hour "last poll
+        failed" streak on the dashboard, not a transient blip). The next poll attempt re-logging-in
+        from a clean slate is what actually recovers."""
+        try:
+            return fn(*args, **kwargs)
+        except Exception:
+            self._logged_in = False
+            raise
+
     def _get_plant_id(self) -> str:
         """Assumes a single-plant account, matching this project's `credentials.json` schema
         (one `device_sn`, no `plant_id` field) - not built for multi-plant accounts."""
         if self._plant_id is None:
             self._ensure_login()
-            plants = self._api.plant_list_two()
+            plants = self._call(self._api.plant_list_two)
             if not plants:
                 raise RuntimeError("Growatt account has no plants")
             self._plant_id = str(plants[0]["id"])
@@ -90,7 +104,7 @@ class GrowattClient:
         """Return one day's 5-minute power series (watts), keyed by timestamp."""
         self._ensure_login()
         date = date or datetime.datetime.now()
-        data = self._api.tlx_data(self._credentials.device_sn, date=date)
+        data = self._call(self._api.tlx_data, self._credentials.device_sn, date=date)
         series = data.get("invPacData", {})
         return {
             datetime.datetime.strptime(key, "%Y-%m-%d %H:%M"): float(value)
@@ -128,7 +142,7 @@ class GrowattClient:
         deliberately not exposed here since there's nothing real to report for it yet.
         """
         self._ensure_login()
-        data = self._api.plant_energy_data(self._get_plant_id())
+        data = self._call(self._api.plant_energy_data, self._get_plant_id())
         return GenerationSummary(
             current_power_w=float(data["powerValue"]),
             today_kwh=float(data["todayValue"]),
