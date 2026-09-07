@@ -60,6 +60,15 @@ class RunState:
     # alone (a display string) isn't enough to link back to the real file
     frames_done: int = 0  # av1an's done.json is frame-based, not chunk-based - see
     frames_total: int = 0  # ChunkProgress/ActiveChunkInfo for real per-chunk tracking
+    active_seconds_at_encoding_start: float | None = None  # a one-time snapshot of
+    # item_active_seconds (see below), taken the moment frames_total first becomes real (i.e.
+    # scene-detection/splitting just finished - see JobRunner._wait_for_av1an). The real
+    # per-frame-rate ETA (live_job.py) subtracts this back out of the current active_seconds
+    # before dividing by frames_done - without it, that division includes however long
+    # scene-detection took (zero frames produced the whole time) in the same denominator as real
+    # encode progress, confirmed live to inflate a fresh ETA to over a day immediately after a
+    # ~100-minute scene-detection pass, wildly pessimistic against the ~5fps chunks were actually
+    # finishing at. None until the first real frame data arrives this item.
     estimated_source_frames: int | None = None  # a fast, metadata-only ffprobe estimate (not
     # av1an's own real count, which isn't available until frames_total above is populated) - only
     # ever computed/used when video.upscale.scene_detect_fps is set, to show a rough progress
@@ -269,6 +278,7 @@ class JobRunner:
                 self._state.current_item_src_path = str(item.src_file)
                 self._state.frames_done = 0
                 self._state.frames_total = 0
+                self._state.active_seconds_at_encoding_start = None
                 self._state.estimated_source_frames = None
                 self._state.chunk_progress = None
                 self._state.finalizing = False
@@ -516,6 +526,17 @@ class JobRunner:
                 self._begin_active_segment()
             with self._lock:
                 if progress is not None:
+                    if self._state.active_seconds_at_encoding_start is None:
+                        # First real data from av1an this item - scene-detection/splitting just
+                        # finished. Snapshot active_seconds accrued so far (which includes that
+                        # whole zero-frame-producing window) so the real ETA can subtract it back
+                        # out - see RunState.active_seconds_at_encoding_start's own docstring.
+                        snapshot = self._state.item_active_seconds
+                        if self._state.active_segment_started_at is not None:
+                            snapshot += (
+                                datetime.datetime.now() - self._state.active_segment_started_at
+                            ).total_seconds()
+                        self._state.active_seconds_at_encoding_start = snapshot
                     self._state.frames_done = progress.done_frames
                     self._state.frames_total = progress.total_frames
                 self._state.chunk_progress = chunk_progress

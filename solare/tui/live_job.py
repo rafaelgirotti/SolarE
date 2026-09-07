@@ -164,8 +164,19 @@ class LiveJobSource:
             eta_text = "all chunks done - finalizing (concatenating into the output file)..."
         else:
             active_seconds = _active_seconds(state, now)
-            if state.frames_done > 5 and active_seconds > 5 and state.frames_total:
-                rate = active_seconds / state.frames_done
+            # Excludes whatever active_seconds accrued *before* real encoding began (i.e. av1an's
+            # own scene-detection/splitting pass, which produces zero frames but can take real,
+            # non-trivial minutes on a long upscale-enabled title) - dividing frames_done by the
+            # *full* active_seconds would fold that dead time into the same rate as real encode
+            # progress, confirmed live to produce a wildly pessimistic ETA (over a day) right after
+            # a ~100-minute scene-detection pass finished, against chunks actually completing at
+            # ~5fps combined. max(..., 0.0) guards a snapshot taken fractionally after "now" due to
+            # ordinary polling-interval slop, not because it can legitimately go negative.
+            encoding_active_seconds = max(
+                0.0, active_seconds - (state.active_seconds_at_encoding_start or 0.0)
+            )
+            if state.frames_done > 5 and encoding_active_seconds > 5 and state.frames_total:
+                rate = encoding_active_seconds / state.frames_done
                 remaining = rate * max(0, state.frames_total - state.frames_done)
                 eta_time = now + datetime.timedelta(seconds=remaining)
                 # No percentage here - the progress bar already shows overall_pct as its own "X%"
