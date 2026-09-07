@@ -58,6 +58,11 @@ class RunState:
     current_item_name: str = ""
     current_item_src_path: str = ""  # full source path, for the dashboard's hyperlink - name
     # alone (a display string) isn't enough to link back to the real file
+    current_temp_dir: str = ""  # av1an's --temp dir for the item currently encoding - lets the
+    # dashboard add the in-progress item's already-encoded chunks (av1an-temp/encode/*) to
+    # "Output used", which otherwise only sums finished .mkv files and reads as 0GB used for
+    # however long the first item takes, even with real chunk data already on disk. Empty
+    # whenever no item is actively encoding (including already-done skips - see _run()'s reset).
     frames_done: int = 0  # av1an's done.json is frame-based, not chunk-based - see
     frames_total: int = 0  # ChunkProgress/ActiveChunkInfo for real per-chunk tracking
     active_seconds_at_encoding_start: float | None = None  # a one-time snapshot of
@@ -276,6 +281,7 @@ class JobRunner:
                 # (border title, Batch line) where that boilerplate is dead weight - see app.py.
                 self._state.current_item_name = clean_title(self._config, item.src_file)
                 self._state.current_item_src_path = str(item.src_file)
+                self._state.current_temp_dir = ""
                 self._state.frames_done = 0
                 self._state.frames_total = 0
                 self._state.active_seconds_at_encoding_start = None
@@ -321,6 +327,8 @@ class JobRunner:
             else item.out_file.parent / f"{item.out_file.stem}.av1an-temp"
         )
         video_tmp = item.out_file.parent / f"{item.out_file.stem}.video.tmp.mkv"
+        with self._lock:
+            self._state.current_temp_dir = str(temp_dir)
         self._logged_chunk_keys.clear()
 
         with self._lock:
