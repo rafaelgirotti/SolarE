@@ -97,6 +97,36 @@ def generate_vpy(config: TitleConfig, src_file: Path, out_vpy: Path, chunk_metho
     that combination and is real wasted work if it ever happens (QTGMC would run on the already-4x
     -larger frame) - worth revisiting (deinterlace before upscale instead) if that combination is
     ever actually needed, not preemptively solved here."""
+    lines = _build_vpy_lines(config, src_file, out_vpy, chunk_method, include_upscale=True)
+    out_vpy.write_text("\n".join(lines) + "\n")
+    return out_vpy
+
+
+def generate_proxy_vpy(config: TitleConfig, src_file: Path, out_vpy: Path, chunk_method: str) -> Path:
+    """A cheaper scene-detection-only stand-in for av1an's own `--proxy` flag - mirrors
+    generate_vpy()'s pipeline exactly (same loader, same crop, same deinterlace/speed-correction
+    if those are ever combined with upscale) *except* it skips the upscale filter itself.
+
+    Why this exists: av1an's own scene-detection pass (finding chunk-split boundaries) decodes
+    the *entire* source through whatever script it's given as input - with no upscale-aware proxy,
+    that means running the full TensorRT upscale on all 179k+ frames of a feature-length film
+    purely to look at frame differences, then throwing the result away, before encoding runs the
+    exact same upscale *again* per chunk for real. Confirmed live: this made scene-detection alone
+    take longer than the isolated upscale-only benchmark suggested, on top of being a real ~2x
+    upscale-compute waste. `--proxy`'s only hard requirement (per `av1an --help`) is producing the
+    *same frame count* as the real input - true here by construction, since skipping the upscale
+    filter doesn't change frame count, only resolution.
+
+    Only meaningful (and only ever called) when `video.upscale` is set - a title with no upscale
+    has nothing expensive for scene-detection to skip in the first place."""
+    lines = _build_vpy_lines(config, src_file, out_vpy, chunk_method, include_upscale=False)
+    out_vpy.write_text("\n".join(lines) + "\n")
+    return out_vpy
+
+
+def _build_vpy_lines(
+    config: TitleConfig, src_file: Path, out_vpy: Path, chunk_method: str, include_upscale: bool
+) -> list[str]:
     loader = _LOADERS.get(chunk_method)
     if loader is None:
         raise ValueError(
@@ -120,7 +150,9 @@ def generate_vpy(config: TitleConfig, src_file: Path, out_vpy: Path, chunk_metho
         # crop untouched. The TensorRT engine needs the *cropped* frame: it's a fixed-shape
         # compiled artifact built for one exact resolution (see engine_path()) - upscale requires
         # `crop` to be set for exactly this reason, checked here rather than left to a confusing
-        # failure inside vs-mlrt/TensorRT later.
+        # failure inside vs-mlrt/TensorRT later. Applied identically in the proxy script (whether
+        # or not include_upscale is True) - crop doesn't affect frame count so it isn't required
+        # for the proxy's own correctness, but keeping it identical is simple and harmless.
         if not video.crop:
             raise ValueError(
                 "video.upscale requires video.crop to be set - the TensorRT engine is built for "
@@ -129,17 +161,19 @@ def generate_vpy(config: TitleConfig, src_file: Path, out_vpy: Path, chunk_metho
         w, h, x, y = _parse_crop(video.crop)
         lines.append(f"clip = core.std.CropAbs(clip, width={w}, height={h}, left={x}, top={y})")
 
-        path = _require_upscale_engine(video.upscale, w, h)
-        lines.append('clip = core.resize.Bicubic(clip, format=vs.RGBS, matrix_in_s="709")')
-        lines.append(
-            f'clip = core.trt.Model(clip, engine_path=r"{path}", '
-            f"use_cuda_graph={video.upscale.use_cuda_graph})"
-        )
-        # Deliberately back to plain 8-bit YUV, not video.pix_fmt directly - av1an's own
-        # `--pix-format` flag (already set from video.pix_fmt in av1an.py's build_args(), applied
-        # regardless of what this script outputs) handles the final bit-depth conversion, exactly
-        # as it already does for every other title whether or not this script runs at all.
-        lines.append('clip = core.resize.Bicubic(clip, format=vs.YUV420P8, matrix_s="709")')
+        if include_upscale:
+            path = _require_upscale_engine(video.upscale, w, h)
+            lines.append('clip = core.resize.Bicubic(clip, format=vs.RGBS, matrix_in_s="709")')
+            lines.append(
+                f'clip = core.trt.Model(clip, engine_path=r"{path}", '
+                f"use_cuda_graph={video.upscale.use_cuda_graph})"
+            )
+            # Deliberately back to plain 8-bit YUV, not video.pix_fmt directly - av1an's own
+            # `--pix-format` flag (already set from video.pix_fmt in av1an.py's build_args(),
+            # applied regardless of what this script outputs) handles the final bit-depth
+            # conversion, exactly as it already does for every other title whether or not this
+            # script runs at all.
+            lines.append('clip = core.resize.Bicubic(clip, format=vs.YUV420P8, matrix_s="709")')
 
     if video.deinterlace is not None:
         d = video.deinterlace
@@ -155,9 +189,7 @@ def generate_vpy(config: TitleConfig, src_file: Path, out_vpy: Path, chunk_metho
         lines.append(f"clip = core.std.AssumeFPS(clip, fpsnum={num}, fpsden={den})")
 
     lines.append("clip.set_output()")
-
-    out_vpy.write_text("\n".join(lines) + "\n")
-    return out_vpy
+    return lines
 
 
 def _fps_to_fraction(fps: str) -> tuple[int, int]:

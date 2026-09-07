@@ -12,6 +12,12 @@ If `video.deinterlace`/`video.speedCorrection`/`video.upscale` is configured, av
 points at a generated VapourSynth script (see engine/preprocess.py) instead of the raw source
 file - av1an accepts a `.vpy` script as input directly, so chunking/encoding reads straight off
 the filtered output with no separate full-file transcode pass.
+
+If `video.upscale` specifically is configured, av1an's own `--proxy` also points at a second,
+cheaper generated script (same pipeline, upscale filter skipped) used only for scene-detection -
+see preprocess.generate_proxy_vpy()'s own docstring for why: without it, scene-detection decodes
+the entire source through the real (expensive) upscale filter just to look at frame differences,
+then encoding runs the exact same upscale again per chunk for real.
 """
 
 from __future__ import annotations
@@ -26,7 +32,7 @@ import psutil
 from solare import platform as solare_platform
 from solare.engine.chunk_progress import ChunkProgress, find_latest_log, parse_chunk_progress
 from solare.engine.config import TitleConfig
-from solare.engine.preprocess import generate_vpy, needs_preprocessing
+from solare.engine.preprocess import generate_proxy_vpy, generate_vpy, needs_preprocessing
 
 
 @dataclass
@@ -70,6 +76,7 @@ class Av1anRunner:
         # even if called before start() - e.g. for logging what's about to run.
         self._temp_dir.mkdir(parents=True, exist_ok=True)
         self._input_path = self._src_file
+        self._proxy_path: Path | None = None
         if needs_preprocessing(config):
             # Deliberately NOT inside temp_dir: verified directly that av1an wipes/recreates its
             # own --temp directory on a fresh (non-resume) start, which silently deleted this file
@@ -81,6 +88,14 @@ class Av1anRunner:
             vpy_path = self._video_out.parent / f"{self._video_out.stem}.preprocess.vpy"
             generate_vpy(config, self._src_file, vpy_path, self._chunk_method)
             self._input_path = vpy_path
+            if config.video.upscale is not None:
+                # A cheaper stand-in for av1an's own scene-detection pass specifically - see
+                # generate_proxy_vpy()'s own docstring for why this matters (without it,
+                # scene-detection runs the full TensorRT upscale on every frame, then throws the
+                # result away, before encoding runs the exact same upscale again for real).
+                proxy_path = self._video_out.parent / f"{self._video_out.stem}.proxy.vpy"
+                generate_proxy_vpy(config, self._src_file, proxy_path, self._chunk_method)
+                self._proxy_path = proxy_path
 
     def build_args(self) -> list[str]:
         video = self._config.video
@@ -103,6 +118,8 @@ class Av1anRunner:
         ]
         if video.pix_fmt:
             args += ["--pix-format", video.pix_fmt]
+        if self._proxy_path is not None:
+            args += ["--proxy", str(self._proxy_path)]
         if video.crop and video.upscale is None:
             # When upscale is set, crop is already applied inside the generated .vpy script
             # (ahead of the upscale filter, which needs the cropped frame) - see preprocess.py.
