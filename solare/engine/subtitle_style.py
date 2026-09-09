@@ -82,6 +82,18 @@ def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, ou
     line taking its own correct spot. Closest-start correctly pairs each line with its own
     corresponding reveal step instead.
 
+    Among time-overlapping candidates, a plain _STANDARD_STYLES (dialogue) candidate is always
+    preferred over a non-standard one, even when a non-standard candidate's start is numerically
+    closer - confirmed live as a real, separate mismatch: a spoken line ("Although... it seems
+    you're not just good in surgery") landed 0.06s after a same-moment on-screen name-card event
+    ("Dr. Becker", style "signs") starts, closer in absolute time than the correct Default-style
+    reference event was - so plain closest-start alone handed an ordinary spoken line the name
+    card's own cramped bottom-of-frame position and (once matched) its timing, instead of the
+    normal subtitle spot. A character name card appearing right as that character starts speaking
+    is common in this source, not a one-off - restricting the pool to standard-style candidates
+    first (falling back to the full candidate set only when none exist) avoids this whole category
+    of mismatch rather than special-casing this one instance of it.
+
     Explicitly writes LF-only line endings, not pysubs2's own CRLF default - confirmed live as a
     real, previously-unexplained mpv-only rendering failure: a CRLF-terminated .ass muxed into
     Matroska played back correctly for exactly one event before mpv silently discarded the real
@@ -134,7 +146,9 @@ def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, ou
     flagged: list[dict] = []
     for line_in in plain:
         candidates = [e for e in reference if _overlap(e, line_in) > 0]
-        best = min(candidates, key=lambda e: abs(e.start - line_in.start), default=None)
+        standard_candidates = [e for e in candidates if e.style in _STANDARD_STYLES]
+        pool = standard_candidates or candidates
+        best = min(pool, key=lambda e: abs(e.start - line_in.start), default=None)
         clean_text = _ASS_OVERRIDE_RE.sub("", line_in.text)
         line_out = pysubs2.SSAEvent(start=line_in.start, end=line_in.end)
         if best is not None:
