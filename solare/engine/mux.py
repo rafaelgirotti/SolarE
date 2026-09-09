@@ -183,6 +183,38 @@ def add_subtitle_to_existing_output(
     tmp_out.replace(existing_mkv)
 
 
+def remove_subtitle_from_existing_output(
+    existing_mkv: Path, stream_index: int, promote_language: str | None
+) -> None:
+    """Strips one existing subtitle stream (type-relative index, same convention as
+    find_stream_index/SubtitleSource) from an ALREADY-FINISHED mux, e.g. to back out a
+    previously-added track that turned out broken in playback - see
+    history/strip_monster_pt_subtitles.py. `promote_language` (e.g. "eng"), if given, is an
+    existing subtitle language to flip back to default - `-c copy` alone doesn't recompute
+    disposition, so whichever track should become the new default needs it set explicitly here.
+    Same temp-file-then-replace safety as add_/replace_subtitle_in_existing_output - a failed run
+    never touches the original."""
+    tmp_out = existing_mkv.with_suffix(".subtitle-remove.tmp" + existing_mkv.suffix)
+    args = [
+        "ffmpeg", "-y",
+        "-i", str(existing_mkv),
+        "-map", "0", "-map", f"-0:s:{stream_index}",
+        "-map_chapters", "0",
+        "-c", "copy",
+    ]
+    if promote_language:
+        promote_idx = find_stream_index(existing_mkv, "s", promote_language)
+        # The removed stream shifts every later subtitle's relative index down by one - only
+        # adjust if the promoted track sat after the one being removed.
+        if promote_idx > stream_index:
+            promote_idx -= 1
+        if promote_idx >= 0:
+            args += [f"-disposition:s:{promote_idx}", "default"]
+    args += [str(tmp_out)]
+    subprocess.run(args, check=True, capture_output=True, text=True)
+    tmp_out.replace(existing_mkv)
+
+
 def replace_subtitle_in_existing_output(
     existing_mkv: Path, old_stream_index: int, new_subtitle_path: Path, subtitle: Subtitle
 ) -> None:

@@ -21,6 +21,7 @@ from solare.engine.mux import (
     SubtitleSource,
     add_subtitle_to_existing_output,
     mux_episode,
+    remove_subtitle_from_existing_output,
     replace_subtitle_in_existing_output,
     resolve_subtitle_sources,
 )
@@ -71,6 +72,7 @@ __all__ = [
     "output_name",
     "prepend_local_tools_to_path",
     "relocate_job_dir",
+    "remove_subtitle_from_existing_output",
     "replace_subtitle_in_existing_output",
     "resolve_subtitle_sources",
     "transcode_audio_track",
