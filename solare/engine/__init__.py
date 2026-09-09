@@ -5,6 +5,7 @@ from solare.engine.config import (
     AudioTrack,
     DeinterlaceSettings,
     NamingTransform,
+    OpenSubtitlesCredentials,
     SolarGate,
     SourceFolder,
     SpeedCorrection,
@@ -16,8 +17,16 @@ from solare.engine.config import (
 )
 from solare.engine.dolby_vision import inject_rpu
 from solare.engine.integrity import IntegrityResult, check_output_integrity
-from solare.engine.mux import SubtitleSource, mux_episode, resolve_subtitle_sources
+from solare.engine.mux import (
+    SubtitleSource,
+    add_subtitle_to_existing_output,
+    mux_episode,
+    replace_subtitle_in_existing_output,
+    resolve_subtitle_sources,
+)
+from solare.engine.opensubtitles import OpenSubtitlesClient, download_path, fetch_subtitle_for_item
 from solare.engine.preprocess import generate_vpy, needs_preprocessing
+from solare.engine.subtitle_style import generate_styled_subtitle
 from solare.engine.queue import QueueItem, build_queue, clean_title, has_unfinished_work, output_name
 from solare.engine.relocate import relocate_job_dir
 from solare.engine.runner import JobRunner, RunPhase, RunState
@@ -33,6 +42,8 @@ __all__ = [
     "IntegrityResult",
     "JobRunner",
     "NamingTransform",
+    "OpenSubtitlesClient",
+    "OpenSubtitlesCredentials",
     "RunPhase",
     "RunState",
     "SolarGate",
@@ -45,9 +56,13 @@ __all__ = [
     "VideoSettings",
     "load_config",
     "QueueItem",
+    "add_subtitle_to_existing_output",
     "build_queue",
     "check_output_integrity",
     "clean_title",
+    "download_path",
+    "fetch_subtitle_for_item",
+    "generate_styled_subtitle",
     "generate_vpy",
     "has_unfinished_work",
     "inject_rpu",
@@ -56,6 +71,7 @@ __all__ = [
     "output_name",
     "prepend_local_tools_to_path",
     "relocate_job_dir",
+    "replace_subtitle_in_existing_output",
     "resolve_subtitle_sources",
     "transcode_audio_track",
 ]

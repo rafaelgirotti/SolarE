@@ -152,12 +152,27 @@ class Subtitle:
     language: str
     title: str
     default: bool = False
-    source: str = "primary"  # "primary" (a stream in the source file) or "external"
+    source: str = "primary"  # "primary" (a stream in the source file), "external" (a file already
+    # on disk), or "opensubtitles" (downloaded from OpenSubtitles - see engine/opensubtitles.py;
+    # requires TitleConfig.open_subtitles to be set)
     external_pattern: str | None = None  # only for source == "external"; "{EP}" -> episode tag
     exclude_title_match: str | None = None
     match_title: str | None = None
     codec: str | None = None  # filter by codec_name (e.g. "ass" vs "hdmv_pgs_subtitle")
     language_ietf: str | None = None  # see AudioTrack.language_ietf
+
+
+@dataclass
+class OpenSubtitlesCredentials:
+    """Auth for a `Subtitle` with source == "opensubtitles" (see engine/opensubtitles.py). The
+    static api_key alone only gets you search access - the /download endpoint additionally needs
+    a real account login (username/password), since anonymous downloads are capped far too low
+    (~5/day) to be useful for backfilling a whole season. Inline in the title's own JSON, same as
+    every other per-title setting - config/*.json is already gitignored except the example."""
+
+    api_key: str
+    username: str
+    password: str
 
 
 @dataclass
@@ -186,6 +201,7 @@ class TitleConfig:
     subtitles: list[Subtitle] = field(default_factory=list)
     font_attach_dir: str | None = None
     solar_gate: SolarGate | None = None
+    open_subtitles: OpenSubtitlesCredentials | None = None
 
     @property
     def settings_summary(self) -> str:
@@ -263,6 +279,14 @@ def _parse_solar_gate(entry: dict | None) -> SolarGate | None:
     return SolarGate(enabled=entry.get("enabled", True), min_watts=entry["minWatts"])
 
 
+def _parse_open_subtitles(entry: dict | None) -> OpenSubtitlesCredentials | None:
+    if entry is None:
+        return None
+    return OpenSubtitlesCredentials(
+        api_key=entry["apiKey"], username=entry["username"], password=entry["password"]
+    )
+
+
 def load_config(path: str | Path) -> TitleConfig:
     path = Path(path)
     with path.open() as f:
@@ -308,4 +332,5 @@ def load_config(path: str | Path) -> TitleConfig:
         subtitles=[_parse_subtitle(s) for s in data.get("subtitles", [])],
         font_attach_dir=data.get("fontAttachDir"),
         solar_gate=_parse_solar_gate(data.get("solarGate")),
+        open_subtitles=_parse_open_subtitles(data.get("openSubtitles")),
     )

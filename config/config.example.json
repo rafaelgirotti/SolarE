@@ -57,8 +57,20 @@
       "matchTitle": null,
       "codec": null,
       "languageIetf": null
+    },
+    {
+      "language": "por",
+      "title": "Portuguese (Brazil)",
+      "default": false,
+      "source": "opensubtitles",
+      "externalPattern": null,
+      "excludeTitleMatch": null,
+      "matchTitle": null,
+      "codec": null,
+      "languageIetf": "pt-BR"
     }
   ],
   "fontAttachDir": null,
-  "solarGate": null
+  "solarGate": null,
+  "openSubtitles": null
 }

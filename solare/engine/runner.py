@@ -33,6 +33,7 @@ from solare.engine.config import TitleConfig
 from solare.engine.dolby_vision import inject_rpu
 from solare.engine.integrity import check_output_integrity
 from solare.engine.mux import mux_episode, resolve_subtitle_sources
+from solare.engine.opensubtitles import fetch_subtitle_for_item
 from solare.engine.queue import QueueItem, build_queue, clean_title
 from solare.engine import ffprobe, timing
 from solare.solar import SolarPoller
@@ -44,6 +45,7 @@ class RunPhase(Enum):
     VIDEO_ENCODE = "video encoding"
     DOLBY_VISION = "Dolby Vision injection"
     AUDIO = "audio transcoding"
+    SUBTITLE_FETCH = "fetching subtitles"
     MUX = "muxing"
     INTEGRITY = "verifying output"
     DONE = "done"
@@ -412,10 +414,20 @@ class JobRunner:
         if self._stop.is_set():
             return
 
+        opensubtitles_tracks = [s for s in self._config.subtitles if s.source == "opensubtitles"]
+        if opensubtitles_tracks:
+            with self._lock:
+                self._state.phase = RunPhase.SUBTITLE_FETCH
+            for sub in opensubtitles_tracks:
+                self._log(f"fetching subtitle: {sub.title}")
+                fetch_subtitle_for_item(self._config, item, sub, log=self._log)
+        if self._stop.is_set():
+            return
+
         with self._lock:
             self._state.phase = RunPhase.MUX
         self._log("muxing")
-        sub_sources = resolve_subtitle_sources(self._config, item.src_file, episode_tag=None)
+        sub_sources = resolve_subtitle_sources(self._config, item.src_file, item.out_file, episode_tag=None)
         mux_episode(self._config, item.src_file, current_video, audio_files, sub_sources, item.out_file)
 
         current_video.unlink(missing_ok=True)

@@ -301,26 +301,21 @@ name = "solare"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "psutil" },
-    { name = "textual" },
-]
-
-[package.optional-dependencies]
-gpu = [
-    { name = "nvidia-ml-py" },
-]
-solar = [
     { name = "growattserver" },
+    { name = "nvidia-ml-py" },
+    { name = "psutil" },
+    { name = "requests" },
+    { name = "textual" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "growattserver", marker = "extra == 'solar'" },
-    { name = "nvidia-ml-py", marker = "extra == 'gpu'" },
+    { name = "growattserver" },
+    { name = "nvidia-ml-py" },
     { name = "psutil", specifier = ">=6.0" },
+    { name = "requests" },
     { name = "textual", specifier = ">=0.60" },
 ]
-provides-extras = ["solar", "gpu"]
 
 [[package]]
 name = "textual"

@@ -55,7 +55,7 @@ class GrowattClient:
     def __init__(self, credentials: GrowattCredentials):
         if not _GROWATT_AVAILABLE:
             raise RuntimeError(
-                "growattServer isn't installed - run `uv sync --extra solar` to enable solar monitoring"
+                "growattServer isn't installed - run `uv sync` to restore it"
             )
         self._credentials = credentials
         # add_random_user_id works around a known growattServer/API quirk where repeated logins

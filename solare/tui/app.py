@@ -559,7 +559,7 @@ class SolarEApp(App):
                 f"[b]{_label('GPU')}[/b]{gpu_load}, temp {gpu_temp}, {gpu_power}, {gpu_mem}"
             )
         else:
-            lines.append(f"[b]{_label('GPU')}[/b]n/a (no NVIDIA GPU detected, or the gpu extra isn't installed)")
+            lines.append(f"[b]{_label('GPU')}[/b]n/a (no NVIDIA GPU detected, or nvidia-ml-py isn't installed)")
         ram_color = colors.rising_gradient(
             hw.ram_load_pct, colors.RAM_LOAD_WARN_PCT, colors.RAM_LOAD_DANGER_PCT
         )

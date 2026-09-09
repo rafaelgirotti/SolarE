@@ -2,8 +2,10 @@
 
 Video and audio are always stream-copied here - both were already produced by earlier passes
 (encode, and transcode-to-Opus respectively). Subtitles and chapters come from the source file by
-default, or from a standalone external file for a subtitle sourced outside it (e.g. a release with
-no subtitle track at all in the language needed, filled in from a separate project's files).
+default, from a standalone external file for a subtitle sourced outside it (e.g. a release with no
+subtitle track at all in the language needed, filled in from a separate project's files), or
+downloaded from OpenSubtitles (see engine/opensubtitles.py - the fetch happens in its own pipeline
+phase before this module ever runs, this module only expects the result already on disk).
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from pathlib import Path
 
 from solare.engine.config import Subtitle, TitleConfig
 from solare.engine.ffprobe import count_streams, find_stream_index
+from solare.engine.opensubtitles import download_path
 from solare.engine.queue import clean_title
 
 
@@ -25,7 +28,7 @@ class SubtitleSource:
 
 
 def resolve_subtitle_sources(
-    config: TitleConfig, src_file: Path, episode_tag: str | None
+    config: TitleConfig, src_file: Path, out_file: Path, episode_tag: str | None
 ) -> list[SubtitleSource]:
     sources = []
     for sub in config.subtitles:
@@ -35,6 +38,18 @@ def resolve_subtitle_sources(
             path = Path(sub.external_pattern.replace("{EP}", episode_tag or ""))
             if not path.is_file():
                 raise FileNotFoundError(f"External subtitle file not found: {path}")
+            sources.append(SubtitleSource(sub, None, path))
+        elif sub.source == "opensubtitles":
+            # The subtitle-fetch phase (JobRunner._run_item, before this mux step) already
+            # downloaded this - see opensubtitles.fetch_subtitle_for_item. Missing here means that
+            # phase didn't run or failed silently, which shouldn't happen (it raises loudly on
+            # failure) - this is a safety net, not the expected path to a missing file.
+            path = download_path(out_file, sub)
+            if not path.is_file():
+                raise FileNotFoundError(
+                    f"OpenSubtitles download for {sub.title!r} not found at {path} - the "
+                    f"subtitle-fetch phase should have produced this before muxing"
+                )
             sources.append(SubtitleSource(sub, None, path))
         else:
             idx = find_stream_index(
@@ -127,3 +142,81 @@ def mux_episode(
 
     args += [str(out_file)]
     subprocess.run(args, check=True, capture_output=True, text=True)
+
+
+def add_subtitle_to_existing_output(
+    existing_mkv: Path, new_subtitle_path: Path, subtitle: Subtitle, demote_language: str | None
+) -> None:
+    """Adds one new subtitle track to an ALREADY-FINISHED mux (a completed episode's output file),
+    for backfilling a subtitle that wasn't available when it was first encoded - see
+    history/backfill_monster_subtitles.py. Unlike mux_episode() (which builds a fresh mux from raw
+    pieces produced this same run), this remuxes an existing file: every stream already in it
+    passes through unchanged (`-map 0`, `-c copy`, disposition preserved automatically on copy)
+    plus the new subtitle as one added stream. `demote_language` (e.g. "eng"), if given, is an
+    existing subtitle language to flip off default for - only one subtitle should normally be
+    flagged default, and `-c copy` alone doesn't change that on its own. Writes to a temp file and
+    replaces the original only on success - a failed remux never damages a completed episode."""
+    existing_sub_count = count_streams(existing_mkv, "s")
+    demote_idx = find_stream_index(existing_mkv, "s", demote_language) if demote_language else -1
+
+    tmp_out = existing_mkv.with_suffix(".subtitle-backfill.tmp" + existing_mkv.suffix)
+    args = [
+        "ffmpeg", "-y",
+        "-i", str(existing_mkv),
+        "-i", str(new_subtitle_path),
+        "-map", "0", "-map", "1:0",
+        "-map_chapters", "0",
+        "-c", "copy",
+    ]
+    if demote_idx >= 0:
+        args += [f"-disposition:s:{demote_idx}", "0"]
+    new_sub_index = existing_sub_count
+    args += [
+        f"-disposition:s:{new_sub_index}", "default" if subtitle.default else "0",
+        f"-metadata:s:s:{new_sub_index}", f"title={subtitle.title}",
+        f"-metadata:s:s:{new_sub_index}", f"language={subtitle.language}",
+    ]
+    if subtitle.language_ietf:
+        args += [f"-metadata:s:s:{new_sub_index}", f"language-ietf={subtitle.language_ietf}"]
+    args += [str(tmp_out)]
+    subprocess.run(args, check=True, capture_output=True, text=True)
+    tmp_out.replace(existing_mkv)
+
+
+def replace_subtitle_in_existing_output(
+    existing_mkv: Path, old_stream_index: int, new_subtitle_path: Path, subtitle: Subtitle
+) -> None:
+    """Swaps one existing subtitle stream (identified by its type-relative index, e.g. from
+    find_stream_index - the same convention resolve_subtitle_sources/SubtitleSource already use)
+    for a corrected replacement, without re-doing the rest of the mux. Added for a real case: a
+    previously-added OpenSubtitles track had leftover ASS override codes baked into its text (see
+    engine/opensubtitles.py's _ASS_OVERRIDE_RE comment) - re-running add_subtitle_to_existing_output
+    with the cleaned file would have just added a *second* copy alongside the bad one, since that
+    function has no notion of "already has this track, replace it." Every other stream (including
+    every OTHER subtitle) passes through unchanged via `-map 0` plus one explicit exclusion of the
+    old stream; the new file takes over that same disposition/metadata. Same temp-file-then-replace
+    safety as add_subtitle_to_existing_output - a failed run never touches the original."""
+    tmp_out = existing_mkv.with_suffix(".subtitle-fix.tmp" + existing_mkv.suffix)
+    args = [
+        "ffmpeg", "-y",
+        "-i", str(existing_mkv),
+        "-i", str(new_subtitle_path),
+        "-map", "0", "-map", f"-0:s:{old_stream_index}",
+        "-map", "1:0",
+        "-map_chapters", "0",
+        "-c", "copy",
+    ]
+    # The replacement lands as the new last subtitle-type output stream (everything before it
+    # passes through in its original relative order, minus the excluded one) - same disposition/
+    # metadata write as add_subtitle_to_existing_output's own new-track case.
+    new_sub_index = count_streams(existing_mkv, "s") - 1
+    args += [
+        f"-disposition:s:{new_sub_index}", "default" if subtitle.default else "0",
+        f"-metadata:s:s:{new_sub_index}", f"title={subtitle.title}",
+        f"-metadata:s:s:{new_sub_index}", f"language={subtitle.language}",
+    ]
+    if subtitle.language_ietf:
+        args += [f"-metadata:s:s:{new_sub_index}", f"language-ietf={subtitle.language_ietf}"]
+    args += [str(tmp_out)]
+    subprocess.run(args, check=True, capture_output=True, text=True)
+    tmp_out.replace(existing_mkv)

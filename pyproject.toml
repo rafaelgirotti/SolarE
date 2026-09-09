@@ -8,11 +8,20 @@ requires-python = ">=3.12"
 dependencies = [
     "textual>=0.60",
     "psutil>=6.0",
+    # These three used to be optional extras (solar/gpu/opensubtitles) - moved to base deps
+    # because `uv run` performs an implicit sync to *exactly* the dependency set requested on
+    # that invocation, and a bare `uv run solare` (no --extra flags) uninstalls anything not
+    # listed here every single time. Confirmed live: this silently wiped growattServer and
+    # nvidia-ml-py from a working install, breaking solar/GPU monitoring with no error until the
+    # next dashboard refresh. None of the three are heavy or platform-specific enough to be worth
+    # the recurring footgun of an optional-extras split that `uv run` doesn't respect by default -
+    # each already degrades gracefully at runtime (see solar/client.py, hw_monitor, and
+    # engine/opensubtitles.py's own try/except ImportError guards) if genuinely unavailable.
+    "growattServer",
+    "nvidia-ml-py",
+    "requests",
+    "pysubs2",
 ]
-
-[project.optional-dependencies]
-solar = ["growattServer"]
-gpu = ["nvidia-ml-py"]
 
 [project.scripts]
 solare = "solare.tui.app:run"

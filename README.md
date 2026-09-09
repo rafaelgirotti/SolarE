@@ -76,9 +76,13 @@ manual toggle uses. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for desig
   Either location is gitignored; nothing in either is ever committed (these are large,
   platform-specific, often GPL-licensed binaries that don't belong in a git history).
 - Optional, only if you want solar generation monitoring: a [Growatt](https://www.growatt.com/)
-  inverter reachable via their cloud API (`--extra solar`).
+  inverter reachable via their cloud API, plus `credentials.json` (see Configuration below) - the
+  `growattServer` package itself is always installed, it just goes unused without credentials.
 - Optional, only for NVIDIA GPU stats in the hardware monitor: an NVIDIA GPU with drivers
-  installed (`--extra gpu`). CPU/RAM monitoring works without it.
+  installed. CPU/RAM monitoring works without it.
+- Optional, only if a title's config uses `source: "opensubtitles"` for a subtitle track: an
+  OpenSubtitles.com account (API key + login) - see `config/config.example.json`'s
+  `openSubtitles` block.
 
 ## Installation
 
@@ -90,18 +94,14 @@ uv sync
 
 `uv sync` creates a `.venv` and installs every dependency pinned in `uv.lock` - no manual
 `pip install` step, and no need to activate the virtualenv yourself; every command below runs
-through `uv run` instead.
+through `uv run` instead. Solar monitoring, GPU stats, and OpenSubtitles support are all base
+dependencies (not optional extras) - each degrades gracefully at runtime if genuinely unused
+(no credentials, no GPU, no title configured to use it), so there's nothing extra to opt into.
 
 Verify the install:
 
 ```bash
 uv run python -c "import solare; print('ok')"
-```
-
-To also pull in the optional solar-monitoring dependency:
-
-```bash
-uv sync --extra solar
 ```
 
 ## Configuration
