@@ -20,12 +20,9 @@ _ASS_OVERRIDE_RE = re.compile(r"\{\\[^}]*\}")
 # keeps override tags embedded in .text, e.g. "{\\an8}Some text".
 _LEADING_TAGS_RE = re.compile(r"^(\{\\[^}]*\})+")
 _FS_TAG_RE = re.compile(r"\\fs([\d.]+)")
-# Plain spoken dialogue, rendered at the style's own default bottom-center box with no per-line
-# positioning - every other style in this project's Monster (2004) reference tracks (signs, ED,
-# ED-ENG, NCOP, X-Files) is a hand-placed on-screen-text overlay (credits, karaoke, signage) baked
-# to a specific spot in a specific frame, not something a timing/text swap alone can validate is
-# still correctly placed for different (usually longer) translated text - see find_nonstandard_events.
-_STANDARD_STYLES = {"Default", "Default - Italic"}
+# Fallback only for a file with no "Default" style at all to compare against (shouldn't happen in
+# practice - every reference track in this project has one) - see _standard_styles().
+_FALLBACK_STANDARD_STYLES = {"Default", "Default - Italic"}
 # Ending/opening theme song lyrics - never auto-embedded (translated OR verbatim) into a generated
 # subtitle: unlike a name card or location sign, lyrics are unambiguously copyrighted creative
 # text, not a proper noun with no real translation decision to make. A reference event in one of
@@ -33,6 +30,28 @@ _STANDARD_STYLES = {"Default", "Default - Italic"}
 # preserved as an "untranslated" orphan - so the ending song simply plays without a caption for
 # these specific lines rather than this tool ever generating or reproducing lyric text itself.
 _LYRIC_STYLES = {"ED", "ED-ENG"}
+
+
+def _standard_styles(styles: dict) -> set[str]:
+    """Determines which style names represent plain spoken dialogue (as opposed to a hand-placed
+    on-screen-text overlay), by comparing each style's own (Fontname, Fontsize) against the
+    "Default" style's - confirmed live as necessary, not just more robust in theory: episode 2's
+    reference introduces "Default - Italic an8" (identical to "Default - Italic" - same Gandhi
+    Sans 75 - except Alignment 8/top instead of 2/bottom, presumably a phone-call or narration line
+    placed above whatever's normally at the bottom of that frame), a real ordinary dialogue
+    variant that a fixed set of known names (this project's original approach) would have wrongly
+    flagged as needing frame-by-frame position review, since it had never been seen before. This
+    source always gives on-screen text (signs/credits/karaoke) a completely different, often
+    decorative font from spoken dialogue (Arial/Souvenir Lt BT/AvantGarde Md BT/X-Files/etc. vs
+    Gandhi Sans) - matching font+size against Default is a reliable, self-adapting signal
+    regardless of what a given episode's own fansubber happened to name a dialogue variant."""
+    if "Default" not in styles:
+        return set(_FALLBACK_STANDARD_STYLES)
+    default = styles["Default"]
+    return {
+        name for name, style in styles.items()
+        if style.fontname == default.fontname and style.fontsize == default.fontsize
+    }
 
 
 def _overlap(a: pysubs2.SSAEvent, b: pysubs2.SSAEvent) -> int:
@@ -99,7 +118,7 @@ def _shrink_to_fit(tags: str, style_fontsize: float, source_plain: str, translat
 
 
 def find_nonstandard_events(ass_path: Path) -> list[dict]:
-    """Lists every event in `ass_path` whose style isn't plain spoken dialogue (_STANDARD_STYLES)
+    """Lists every event in `ass_path` whose style isn't plain spoken dialogue (see _standard_styles())
     - i.e. every hand-placed on-screen-text overlay a fansub timed/positioned against one specific
     source video. A timing/text-matching heuristic (generate_styled_subtitle) can get the *style*
     right while still landing the actual translated text somewhere that doesn't fit the frame it
@@ -111,6 +130,7 @@ def find_nonstandard_events(ass_path: Path) -> list[dict]:
     the plain text, ordered by start time, for a human to jump to each timestamp and confirm
     placement against the actual frame."""
     subs = pysubs2.load(str(ass_path))
+    standard_styles = _standard_styles(subs.styles)
     flagged = [
         {
             "start": _fmt_ms(e.start),
@@ -119,13 +139,13 @@ def find_nonstandard_events(ass_path: Path) -> list[dict]:
             "text": _LEADING_TAGS_RE.sub("", e.text).replace("\\N", " "),
         }
         for e in subs
-        if e.style not in _STANDARD_STYLES
+        if e.style not in standard_styles
     ]
     return sorted(flagged, key=lambda f: f["start"])
 
 
 def find_duplicate_captions(ass_path: Path, window_ms: int = 5000) -> list[dict]:
-    """Flags a plain-dialogue (_STANDARD_STYLES) event whose text closely matches a nearby
+    """Flags a plain-dialogue (see _standard_styles()) event whose text closely matches a nearby
     non-standard-style event's text - confirmed live as a real, recurring OpenSubtitles pattern on
     this source: the plain-text translation sometimes transcribes an on-screen name/location card
     as if it were spoken dialogue (standalone "EVA HEINEMANN" / "DR. BECKER" lines), duplicating
@@ -139,7 +159,8 @@ def find_duplicate_captions(ass_path: Path, window_ms: int = 5000) -> list[dict]
     deleting - a short line that coincidentally repeats a name as real dialogue is possible, if
     rare, so this doesn't delete anything itself."""
     subs = pysubs2.load(str(ass_path))
-    nonstandard = [e for e in subs if e.style not in _STANDARD_STYLES]
+    standard_styles = _standard_styles(subs.styles)
+    nonstandard = [e for e in subs if e.style not in standard_styles]
 
     def normalize(text: str) -> str:
         plain = _LEADING_TAGS_RE.sub("", text).replace("\\N", " ").strip().casefold()
@@ -147,7 +168,7 @@ def find_duplicate_captions(ass_path: Path, window_ms: int = 5000) -> list[dict]
 
     duplicates = []
     for d in subs:
-        if d.style not in _STANDARD_STYLES:
+        if d.style not in standard_styles:
             continue
         d_norm = normalize(d.text)
         if not d_norm or len(d_norm.split()) > 4:
@@ -163,6 +184,51 @@ def find_duplicate_captions(ass_path: Path, window_ms: int = 5000) -> list[dict]
                 })
                 break
     return duplicates
+
+
+_POS_RE = re.compile(r"\\pos\((-?[\d.]+),(-?[\d.]+)\)")
+
+
+def find_position_collisions(ass_path: Path, distance_px: float = 60.0) -> list[dict]:
+    """Flags two non-standard-style events that overlap in time AND sit within `distance_px` of
+    each other's `\\pos` - a genuine visual collision (two separate captions landing on top of one
+    another), as opposed to the intentional shadow-plus-foreground layer pairs `_layer_group`
+    builds (same style, same exact start/end, same position, by design - explicitly excluded here
+    rather than flagged). Only compares events with an explicit `\\pos` - overlapping plain
+    dialogue uses the style's own shared position, which is normal/expected stacking behavior, not
+    a collision. Returns candidates for a human to check against the actual frame, same as
+    find_nonstandard_events - a small on-screen distance isn't proof of a real problem (Monster's
+    own reveal-card lines sit ~85px apart by design), just something worth a look."""
+    subs = pysubs2.load(str(ass_path))
+    standard_styles = _standard_styles(subs.styles)
+    positioned = []
+    for e in subs:
+        if e.style in standard_styles:
+            continue
+        m = _POS_RE.search(e.text)
+        if m:
+            positioned.append((e, float(m.group(1)), float(m.group(2))))
+
+    collisions = []
+    seen_pairs = set()
+    for i, (a, ax, ay) in enumerate(positioned):
+        for b, bx, by in positioned[i + 1 :]:
+            if _overlap(a, b) <= 0:
+                continue
+            if a.style == b.style and a.start == b.start and a.end == b.end:
+                continue  # intentional layer pair
+            if ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5 > distance_px:
+                continue
+            key = tuple(sorted([(a.start, a.text), (b.start, b.text)]))
+            if key in seen_pairs:
+                continue
+            seen_pairs.add(key)
+            collisions.append({
+                "a": {"start": _fmt_ms(a.start), "style": a.style, "text": _LEADING_TAGS_RE.sub("", a.text)},
+                "b": {"start": _fmt_ms(b.start), "style": b.style, "text": _LEADING_TAGS_RE.sub("", b.text)},
+                "distance_px": round(((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5, 1),
+            })
+    return collisions
 
 
 def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, out_path: Path) -> dict:
@@ -183,7 +249,7 @@ def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, ou
     line taking its own correct spot. Closest-start correctly pairs each line with its own
     corresponding reveal step instead.
 
-    Among time-overlapping candidates, a plain _STANDARD_STYLES (dialogue) candidate is always
+    Among time-overlapping candidates, a plain standard-style (dialogue) candidate is always
     preferred over a non-standard one, even when a non-standard candidate's start is numerically
     closer - confirmed live as a real, separate mismatch: a spoken line ("Although... it seems
     you're not just good in surgery") landed 0.06s after a same-moment on-screen name-card event
@@ -207,7 +273,7 @@ def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, ou
     whatever pysubs2's platform default happens to be, avoids the whole class of bug rather than
     just this one instance of it.
 
-    For a matched on-screen-text style (anything outside _STANDARD_STYLES - signs, credits,
+    For a matched on-screen-text style (anything outside the standard-style set - signs, credits,
     karaoke), the OUTPUT event's start/end is copied from `best` (the matched reference event)
     directly, not the incoming plain-text line's own timing - confirmed live as a real, separate
     bug from the CRLF one, on an "accumulating reveal" sequence (see the closest-start-time
@@ -264,13 +330,14 @@ def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, ou
     # iterated - keeps every one of matching/layer-grouping/orphan-preservation below correct by
     # construction instead of by remembering to re-check both conditions everywhere.
     reference_events = [e for e in reference if not e.is_comment and e.style not in _LYRIC_STYLES]
+    standard_styles = _standard_styles(reference.styles)
 
     counters = {"total": 0, "matched_signs": 0, "fallback_default": 0, "nonstandard_position": 0}
     flagged: list[dict] = []
     used_keys: set[tuple] = set()
     for line_in in plain:
         candidates = [e for e in reference_events if _overlap(e, line_in) > 0]
-        standard_candidates = [e for e in candidates if e.style in _STANDARD_STYLES]
+        standard_candidates = [e for e in candidates if e.style in standard_styles]
         pool = standard_candidates or candidates
         best = min(pool, key=lambda e: abs(e.start - line_in.start), default=None)
         clean_text = _ASS_OVERRIDE_RE.sub("", line_in.text)
@@ -281,7 +348,7 @@ def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, ou
             counters["fallback_default"] += 1
             continue
 
-        if best.style in _STANDARD_STYLES:
+        if best.style in standard_styles:
             tags = _LEADING_TAGS_RE.match(best.text)
             line_out = pysubs2.SSAEvent(start=line_in.start, end=line_in.end, style=best.style)
             line_out.text = (tags.group(0) if tags else "") + clean_text
@@ -320,7 +387,7 @@ def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, ou
     # text, verbatim) is still far better than silently absent - flagged either way for follow-up.
     seen_orphan_keys: set[tuple] = set()
     for e in reference_events:
-        if e.style in _STANDARD_STYLES:
+        if e.style in standard_styles:
             continue
         key = (e.style, e.start, e.end)
         if key in used_keys or key in seen_orphan_keys:
