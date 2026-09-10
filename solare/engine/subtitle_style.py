@@ -252,44 +252,62 @@ _POS_RE = re.compile(r"\\pos\((-?[\d.]+),(-?[\d.]+)\)")
 
 
 def find_position_collisions(ass_path: Path, distance_px: float = 60.0) -> list[dict]:
-    """Flags two non-standard-style events that overlap in time AND sit within `distance_px` of
-    each other's `\\pos` - a genuine visual collision (two separate captions landing on top of one
-    another), as opposed to the intentional shadow-plus-foreground layer pairs `_layer_group`
-    builds (same style, same exact start/end, same position, by design - explicitly excluded here
-    rather than flagged). Only compares events with an explicit `\\pos` - overlapping plain
-    dialogue uses the style's own shared position, which is normal/expected stacking behavior, not
-    a collision. Returns candidates for a human to check against the actual frame, same as
-    find_nonstandard_events - a small on-screen distance isn't proof of a real problem (Monster's
-    own reveal-card lines sit ~85px apart by design), just something worth a look."""
+    """Flags two non-standard-style events that overlap in time AND land in the same spot - either
+    within `distance_px` of each other's explicit `\\pos`, or sharing the exact same
+    (style, start, end) with no `\\pos` at all (alignment-only positioning, e.g. `\\an8` - the
+    style's own margins put both in the identical spot with nothing to tell them apart). Excludes
+    the intentional shadow-plus-foreground layer pairs `_layer_group` builds - but only when their
+    `Layer` values actually differ, which is what makes a *real* stacked effect (confirmed live: a
+    true layer pair is always built from different Layer numbers, e.g. 0 under 1). A same-(style,
+    start, end) pair sharing the *same* Layer value too is a different, real bug, not a stacking
+    effect - confirmed live on episode 33: the plain-text source split one reference line's on-
+    screen text into two independently-matched translated lines (same style, same timing, both
+    Layer 0, no \\pos to separate them), so both rendered directly on top of each other rather than
+    as the reference's own single two-line block. Returns candidates for a human to check against
+    the actual frame, same as find_nonstandard_events - a small on-screen distance isn't proof of a
+    real problem (Monster's own reveal-card lines sit ~85px apart by design), just something worth
+    a look; a same-slot, same-layer pair is a much stronger signal than mere proximity."""
     subs = pysubs2.load(str(ass_path))
     standard_styles = _standard_styles(subs.styles)
+    nonstandard = [e for e in subs if e.style not in standard_styles]
+
+    collisions = []
+    seen_pairs = set()
+
+    def _record(a: pysubs2.SSAEvent, b: pysubs2.SSAEvent, distance_px_value: float | None) -> None:
+        key = tuple(sorted([(a.start, a.text), (b.start, b.text)]))
+        if key in seen_pairs:
+            return
+        seen_pairs.add(key)
+        collisions.append({
+            "a": {"start": _fmt_ms(a.start), "style": a.style, "text": _LEADING_TAGS_RE.sub("", a.text)},
+            "b": {"start": _fmt_ms(b.start), "style": b.style, "text": _LEADING_TAGS_RE.sub("", b.text)},
+            "distance_px": distance_px_value,
+        })
+
     positioned = []
-    for e in subs:
-        if e.style in standard_styles:
-            continue
+    for e in nonstandard:
         m = _POS_RE.search(e.text)
         if m:
             positioned.append((e, float(m.group(1)), float(m.group(2))))
 
-    collisions = []
-    seen_pairs = set()
     for i, (a, ax, ay) in enumerate(positioned):
         for b, bx, by in positioned[i + 1 :]:
             if _overlap(a, b) <= 0:
                 continue
-            if a.style == b.style and a.start == b.start and a.end == b.end:
-                continue  # intentional layer pair
-            if ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5 > distance_px:
+            if a.style == b.style and a.start == b.start and a.end == b.end and a.layer != b.layer:
+                continue  # intentional layer pair - same slot, different Layer, by design
+            dist = ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+            if dist > distance_px:
                 continue
-            key = tuple(sorted([(a.start, a.text), (b.start, b.text)]))
-            if key in seen_pairs:
+            _record(a, b, round(dist, 1))
+
+    for i, a in enumerate(nonstandard):
+        for b in nonstandard[i + 1 :]:
+            if a.style != b.style or a.start != b.start or a.end != b.end or a.layer != b.layer:
                 continue
-            seen_pairs.add(key)
-            collisions.append({
-                "a": {"start": _fmt_ms(a.start), "style": a.style, "text": _LEADING_TAGS_RE.sub("", a.text)},
-                "b": {"start": _fmt_ms(b.start), "style": b.style, "text": _LEADING_TAGS_RE.sub("", b.text)},
-                "distance_px": round(((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5, 1),
-            })
+            _record(a, b, None)
+
     return collisions
 
 
