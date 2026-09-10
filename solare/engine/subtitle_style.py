@@ -147,21 +147,6 @@ def _is_credit_line(text: str) -> bool:
     return bool(_CREDIT_LINE_RE.match(text))
 
 
-def _sanitize_onscreen_text(text: str) -> str:
-    """A colon in on-screen text styled with certain custom fonts can trigger a broken/missing
-    glyph - confirmed live on Monster's "X-Files" display font (used for its opening verse card):
-    a colon anywhere in the string made HarfBuzz's shaping drop every character *before* it in the
-    same run, not just render a tofu box for the colon itself - "APOCALIPSE 13: 1-4" displayed as
-    only "1-4", and the user reproduced the identical failure live in Aegisub with unrelated text
-    ("TESTE: 12-3" -> "12-3"), confirming it's the character, not this specific string. A comma
-    reads acceptably in its place and is already proven to render correctly in every other
-    on-screen-text line in this source. Applied to every non-standard-style line generated here,
-    not just the one this was first found on - we don't know which other decorative fonts in this
-    or other titles share the same defect, and a colon is rare enough in on-screen text that a
-    blanket substitution costs nothing."""
-    return text.replace(":", ",")
-
-
 def _insert_tag(tags: str, tag: str) -> str:
     idx = tags.rfind("}")
     return tags[:idx] + tag + tags[idx:] if idx != -1 else "{" + tag + "}" + tags
@@ -221,12 +206,18 @@ def find_duplicate_captions(ass_path: Path, window_ms: int = 5000) -> list[dict]
     what the matched or orphan-preserved signs card already displays - found live via the user's
     own read-through after the "prefer standard style" matching fix (which fixed the *category*
     mismatch bug but does nothing about a genuinely separate, redundant plain-text line that was
-    never wrongly matched to begin with). Only short dialogue lines (at most 4 words after
-    stripping punctuation - long enough that a real sentence won't false-positive against a bare
-    name) within `window_ms` of a non-standard event with matching (case-folded,
-    punctuation-stripped) text are flagged. Returns candidates for a human to confirm before
-    deleting - a short line that coincidentally repeats a name as real dialogue is possible, if
-    rare, so this doesn't delete anything itself."""
+    never wrongly matched to begin with). Originally capped to dialogue lines of at most 4 words,
+    on the theory that a longer real sentence would false-positive against a bare name - but the
+    match itself is exact (case/punctuation-insensitive equality, not a substring or fuzzy score),
+    so that cap didn't actually add any protection against false positives; it only made the
+    detector blind to longer duplicated captions. Confirmed live: a 6-word duplicate
+    ("DELEGACIA DE POLÍCIA DE GIESSEN (ALEMANHA)") sat undetected through an entire episode's
+    review purely because it was one word over the old limit, while normalizing to a byte-for-byte
+    match against the real sign. No length cap now - within `window_ms` of a non-standard event
+    with matching (case-folded, punctuation-stripped) text is flagged regardless of length. Returns
+    candidates for a human to confirm before deleting - a line that coincidentally repeats a
+    caption's exact wording as real dialogue is possible, if rare, so this doesn't delete anything
+    itself."""
     subs = pysubs2.load(str(ass_path))
     standard_styles = _standard_styles(subs.styles)
     nonstandard = [e for e in subs if e.style not in standard_styles]
@@ -240,7 +231,7 @@ def find_duplicate_captions(ass_path: Path, window_ms: int = 5000) -> list[dict]
         if d.style not in standard_styles:
             continue
         d_norm = normalize(d.text)
-        if not d_norm or len(d_norm.split()) > 4:
+        if not d_norm:
             continue
         for n in nonstandard:
             if abs(n.start - d.start) > window_ms:
@@ -309,8 +300,9 @@ def find_position_collisions(ass_path: Path, distance_px: float = 60.0) -> list[
                 continue
             _record(a, b, round(dist, 1))
 
-    for i, a in enumerate(nonstandard):
-        for b in nonstandard[i + 1 :]:
+    no_pos = [e for e in nonstandard if not _POS_RE.search(e.text)]
+    for i, a in enumerate(no_pos):
+        for b in no_pos[i + 1 :]:
             if a.style != b.style or a.start != b.start or a.end != b.end or a.layer != b.layer:
                 continue
             _record(a, b, None)
@@ -483,7 +475,7 @@ def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, ou
         if best.style == "signs":
             counters["matched_signs"] += 1
         used_keys.add((best.style, best.start, best.end))
-        translated_plain = _sanitize_onscreen_text(clean_text.replace("\\N", " "))
+        translated_plain = clean_text.replace("\\N", " ")
         source_plain = _LEADING_TAGS_RE.sub("", best.text).replace("\\N", " ")
         style_fontsize = reference.styles[best.style].fontsize if best.style in reference.styles else 27.0
         for member in _layer_group(reference_events, best):
@@ -520,7 +512,7 @@ def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, ou
         for member in _layer_group(reference_events, e):
             member_tags_match = _LEADING_TAGS_RE.match(member.text)
             member_tags = member_tags_match.group(0) if member_tags_match else ""
-            member_visible = _sanitize_onscreen_text(member.text[len(member_tags):])
+            member_visible = member.text[len(member_tags):]
             out.append(pysubs2.SSAEvent(
                 start=member.start, end=member.end, style=member.style, layer=member.layer,
                 text=member_tags + member_visible,
@@ -528,7 +520,7 @@ def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, ou
         counters["nonstandard_position"] += 1
         flagged.append({
             "start": _fmt_ms(e.start), "end": _fmt_ms(e.end), "style": e.style,
-            "text": "[untranslated] " + _sanitize_onscreen_text(_LEADING_TAGS_RE.sub("", e.text).replace("\\N", " ")),
+            "text": "[untranslated] " + _LEADING_TAGS_RE.sub("", e.text).replace("\\N", " "),
             "suspicious_match": False,
         })
     counters["flagged"] = flagged
