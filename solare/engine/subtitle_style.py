@@ -78,6 +78,24 @@ def _layer_group(reference_events: list[pysubs2.SSAEvent], anchor: pysubs2.SSAEv
     )
 
 
+_CREDIT_LINE_RE = re.compile(r"^\s*Legendas\b", re.IGNORECASE)
+
+
+def _is_credit_line(text: str) -> bool:
+    """The Portuguese uploader's own self-credit ("Legendas: <name>", "subtitles by <name>") -
+    confirmed live as a *structural*, not incidental, source of the content-loss bug `suspicious_
+    match` was built for: this always lands in the same end-of-episode window as the show's own
+    "next episode" title card, and the two compete for the same reference slot on every episode
+    that lacks a dedicated one. Length-ratio flagging (see generate_styled_subtitle's docstring)
+    caught two real cases but missed two others - one exactly at its own threshold, one well below
+    it (1.4x, a translator credit and a short title happen to be similar lengths) - proving ratio
+    alone isn't a reliable signal for *this specific, recurring* pattern. Recognizing the line by
+    its own predictable "Legendas" prefix and routing it around the matching pool entirely removes
+    the whole category, rather than chasing an ever-tighter threshold that still can't rule out a
+    coincidentally-similar-length false negative."""
+    return bool(_CREDIT_LINE_RE.match(text))
+
+
 def _sanitize_onscreen_text(text: str) -> str:
     """A colon in on-screen text styled with certain custom fonts can trigger a broken/missing
     glyph - confirmed live on Monster's "X-Files" display font (used for its opening verse card):
@@ -353,12 +371,24 @@ def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, ou
     flagged: list[dict] = []
     used_keys: set[tuple] = set()
     for line_in in plain:
+        clean_text = _ASS_OVERRIDE_RE.sub("", line_in.text)
+        counters["total"] += 1
+
+        # The translator's own end-credit is never really "on-screen text" in the source's own
+        # sense - it's metadata the uploader added, with no reference counterpart to match against
+        # and a predictable habit of landing in the same end-of-episode window as a real title
+        # card. Routed around the matching pool entirely (see _is_credit_line) rather than left to
+        # compete for a slot it was never part of.
+        if _is_credit_line(clean_text):
+            credit_text = re.sub(r"^\s*Legendas\s*[:,]\s*", "Legendas - ", clean_text, flags=re.IGNORECASE)
+            out.append(pysubs2.SSAEvent(start=line_in.start, end=line_in.end, style="Default", text=credit_text))
+            counters["fallback_default"] += 1
+            continue
+
         candidates = [e for e in reference_events if _overlap(e, line_in) > 0]
         standard_candidates = [e for e in candidates if e.style in standard_styles]
         pool = standard_candidates or candidates
         best = min(pool, key=lambda e: abs(e.start - line_in.start), default=None)
-        clean_text = _ASS_OVERRIDE_RE.sub("", line_in.text)
-        counters["total"] += 1
 
         if best is None:
             out.append(pysubs2.SSAEvent(start=line_in.start, end=line_in.end, style="Default", text=clean_text))
