@@ -307,8 +307,20 @@ def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, ou
     function never matches a plain line to one, never preserves one untranslated, never reproduces
     lyric text in the generated file at all - those specific lines simply have no caption.
 
-    Returns a dict of counters ({total, matched_signs, fallback_default, nonstandard_position}) for
-    the caller to log, plus "flagged": the same list find_nonstandard_events() would produce on the
+    Each matched (non-orphan) flagged entry also carries "suspicious_match": True when the
+    translated text's length is more than 2x or less than 0.5x its matched reference line's own
+    length - found live as a real, separate content-loss bug: a plain SRT line with no genuine
+    reference counterpart at all (a translator's own end-credit, unrelated to anything in the
+    English track) still has to match *something* since the pool is never empty as long as one
+    on-screen-text event exists nearby, and it silently overwrote a real title card ("The
+    Missing") that happened to share its timing - the credit's own text (28 chars) was 2.5x the
+    title's (11 chars), well past where `_shrink_to_fit`'s own 1.6x cap even applies. A count this
+    far off is a strong hint the match itself is wrong, not just that the translation runs long -
+    surfaced for extra scrutiny during review rather than silently accepted.
+
+    Returns a dict of counters ({total, matched_signs, fallback_default, nonstandard_position,
+    suspicious_match}) for the caller to log, plus "flagged": the same list
+    find_nonstandard_events() would produce on the
     output file, so a caller always gets it back without a second pass - `nonstandard_position`
     counting an event with no time-overlapping reference match as fallback_default (0 additions
     there), not raised as an error condition, since a line with no time-overlapping reference event
@@ -332,7 +344,7 @@ def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, ou
     reference_events = [e for e in reference if not e.is_comment and e.style not in _LYRIC_STYLES]
     standard_styles = _standard_styles(reference.styles)
 
-    counters = {"total": 0, "matched_signs": 0, "fallback_default": 0, "nonstandard_position": 0}
+    counters = {"total": 0, "matched_signs": 0, "fallback_default": 0, "nonstandard_position": 0, "suspicious_match": 0}
     flagged: list[dict] = []
     used_keys: set[tuple] = set()
     for line_in in plain:
@@ -373,10 +385,14 @@ def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, ou
             event.text = tags + translated_plain
             out.append(event)
         counters["nonstandard_position"] += 1
+        length_ratio = len(translated_plain) / max(1, len(source_plain))
         flagged.append({
             "start": _fmt_ms(best.start), "end": _fmt_ms(best.end),
             "style": best.style, "text": translated_plain,
+            "suspicious_match": length_ratio > 2.0 or length_ratio < 0.5,
         })
+        if length_ratio > 2.0 or length_ratio < 0.5:
+            counters["suspicious_match"] += 1
 
     # Preserve on-screen-text reference events with no corresponding translated line at all - e.g.
     # a character name card, since nobody speaks a name aloud so no plain-text line will ever
@@ -405,6 +421,7 @@ def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, ou
         flagged.append({
             "start": _fmt_ms(e.start), "end": _fmt_ms(e.end), "style": e.style,
             "text": "[untranslated] " + _sanitize_onscreen_text(_LEADING_TAGS_RE.sub("", e.text).replace("\\N", " ")),
+            "suspicious_match": False,
         })
     counters["flagged"] = flagged
 
