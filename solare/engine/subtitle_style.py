@@ -29,7 +29,20 @@ _FALLBACK_STANDARD_STYLES = {"Default", "Default - Italic"}
 # these styles is treated as if it doesn't exist at all - never matched to a plain line, never
 # preserved as an "untranslated" orphan - so the ending song simply plays without a caption for
 # these specific lines rather than this tool ever generating or reproducing lyric text itself.
-_LYRIC_STYLES = {"ED", "ED-ENG"}
+#
+# A regex, not a fixed set: confirmed live as necessary, not just more robust in theory - this
+# source switches ending themes partway through the season, and the replacement's reference track
+# uses "ED2"/"ED3" (Japanese romaji / English translation) instead of "ED"/"ED-ENG". A fixed set
+# of exact names missed this entirely, meaning real song lyrics (both the Japanese original and
+# its English translation) were being preserved verbatim into a generated file - the exact thing
+# this exclusion exists to prevent, not a cosmetic gap. "OP"/"ED" (opening/ending) plus an
+# optional numeric suffix and/or "-something" language tag is a standard, load-bearing fansub
+# naming convention (confirmed against every style name seen in this project's own reference
+# tracks so far: ED, ED-ENG, ED2, ED3, NCOP) - matching the pattern generally, rather than only
+# the two specific names seen first, closes the whole category instead of the one instance found.
+# Also covers the "non-credit" prefix (NCOP/NCED) - the clean opening/ending video without credits
+# overlaid, which can carry the same on-screen lyric text as OP/ED proper.
+_LYRIC_STYLE_RE = re.compile(r"^(NC)?(OP|ED)\d*(-\w+)?$", re.IGNORECASE)
 
 
 def _standard_styles(styles: dict) -> set[str]:
@@ -351,7 +364,7 @@ def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, ou
     on-screen-text event with no plain-text line ever time-overlapping it at all (typically a
     character name card - nobody speaks a name aloud) is preserved verbatim, untranslated, in a
     pass after the main loop, rather than silently vanishing from the output entirely - EXCEPT for
-    _LYRIC_STYLES (ending/opening theme lyrics), which are excluded from every step above, not just
+    the OP/ED lyric-style pattern (ending/opening theme lyrics), which are excluded from every step above, not just
     this one: unlike a name or location, lyrics are unambiguously copyrighted creative text, so this
     function never matches a plain line to one, never preserves one untranslated, never reproduces
     lyric text in the generated file at all - those specific lines simply have no caption.
@@ -391,11 +404,11 @@ def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, ou
 
     # Comment-type events (a fansubber's own private typesetting notes, e.g. "#ref 01" - confirmed
     # live as real content in this source's NCOP entries) were never meant to display at all;
-    # lyric-style events are excluded per _LYRIC_STYLES above. Treating both as absent from the
+    # lyric-style events (matched by name pattern, see _LYRIC_STYLE_RE) are excluded above. Treating both as absent from the
     # reference entirely - rather than filtering them out separately in each place `reference` gets
     # iterated - keeps every one of matching/layer-grouping/orphan-preservation below correct by
     # construction instead of by remembering to re-check both conditions everywhere.
-    reference_events = [e for e in reference if not e.is_comment and e.style not in _LYRIC_STYLES]
+    reference_events = [e for e in reference if not e.is_comment and not _LYRIC_STYLE_RE.match(e.style)]
     standard_styles = _standard_styles(reference.styles)
 
     counters = {"total": 0, "matched_signs": 0, "fallback_default": 0, "nonstandard_position": 0, "suspicious_match": 0}
