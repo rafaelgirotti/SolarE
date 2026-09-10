@@ -95,8 +95,15 @@ def _batch_eta_text(state: RunState, now: datetime.datetime) -> str | None:
     gaps) add back in. Projected using how much of the batch's own elapsed wall-clock time has
     actually been active so far, rather than separately modeling sunrise/sunset against the solar
     API: whatever fraction of the past was active is the best available estimate for the future
-    too, and it self-corrects for weather/season/manual pauses without a second data source."""
+    too, and it self-corrects for weather/season/manual pauses without a second data source.
+
+    None once the run has actually stopped (DONE/FAILED) - item_index sits at item_count for the
+    final item both while it's still encoding and forever after it finishes (there's no item
+    count+1 to advance to), so `items_remaining` below would otherwise stay stuck at 1 and keep
+    projecting a future ETA for a batch that already has nothing left to do."""
     if state.item_count <= 1 or not state.completed_item_seconds:
+        return None
+    if state.phase in (RunPhase.DONE, RunPhase.FAILED):
         return None
     total_active_so_far = sum(state.completed_item_seconds)
     avg_active_seconds = total_active_so_far / len(state.completed_item_seconds)
@@ -212,7 +219,12 @@ class LiveJobSource:
         current_item_name = None
         current_item_src_path = None
         if state.item_count > 1:
-            completed = state.item_index - 1
+            # item_index is 1-based "item currently being worked on" and never advances past
+            # item_count - once the last item finishes there's no item_count+1 slot to move to,
+            # so item_index - 1 permanently undercounts by one from that point on (it reads as
+            # "still working on the last item" forever, even after DONE). Once the whole run has
+            # actually finished, every item up to item_index is done, not item_index - 1 of them.
+            completed = state.item_index if state.phase == RunPhase.DONE else state.item_index - 1
             batch_summary = f"{state.item_index}/{state.item_count} items ({completed} completed)"
             # Split from batch_summary rather than baked into it - the dashboard renders this part
             # as its own non-wrapping, ellipsis-truncating hyperlink to the real source file, which
