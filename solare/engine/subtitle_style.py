@@ -54,6 +54,37 @@ def _standard_styles(styles: dict) -> set[str]:
     }
 
 
+def _canonical_style(style_name: str, styles: dict, standard_styles: set[str]) -> str | None:
+    """Resolves `style_name` against `standard_styles` case-insensitively, returning the correctly-
+    defined style name to actually use (not the possibly-mistyped one) - confirmed live as
+    necessary, not hypothetical: episode 31's reference tags a large fraction of its own ordinary
+    dialogue with the event-level style "default" (lowercase), while the only style actually
+    defined in [V4+ Styles] is "Default" (capital D) - an exact-string membership check treats
+    every one of those events as an undefined, non-standard style, which cascaded into shrinking
+    ordinary dialogue text, flagging it as an on-screen sign needing position review, and firing
+    false suspicious-match warnings throughout most of the episode. Real ASS renderers are
+    generally forgiving about this (falling back to some usable style rather than refusing to
+    render), so this almost certainly played back fine for viewers - but this project's own
+    matching/shrink logic needs to recognize the *intent* (this is the same style, just typed with
+    different case) rather than silently treating a harmless capitalization slip as if it were a
+    deliberate, different, undefined style. Returns None if `style_name` doesn't resolve to any
+    defined style at all, standard or not - a genuinely undefined style is different from a
+    case-typo'd one and shouldn't be silently rewritten to something arbitrary."""
+    if style_name in styles:
+        for standard in standard_styles:
+            if standard.casefold() == style_name.casefold():
+                return standard
+        return style_name
+    folded = style_name.casefold()
+    for standard in standard_styles:
+        if standard.casefold() == folded:
+            return standard
+    for real_name in styles:
+        if real_name.casefold() == folded:
+            return real_name
+    return None
+
+
 def _overlap(a: pysubs2.SSAEvent, b: pysubs2.SSAEvent) -> int:
     return max(0, min(a.end, b.end) - max(a.start, b.start))
 
@@ -386,7 +417,10 @@ def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, ou
             continue
 
         candidates = [e for e in reference_events if _overlap(e, line_in) > 0]
-        standard_candidates = [e for e in candidates if e.style in standard_styles]
+        standard_candidates = [
+            e for e in candidates
+            if _canonical_style(e.style, reference.styles, standard_styles) in standard_styles
+        ]
         pool = standard_candidates or candidates
         best = min(pool, key=lambda e: abs(e.start - line_in.start), default=None)
 
@@ -395,9 +429,10 @@ def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, ou
             counters["fallback_default"] += 1
             continue
 
-        if best.style in standard_styles:
+        best_canonical_style = _canonical_style(best.style, reference.styles, standard_styles)
+        if best_canonical_style in standard_styles:
             tags = _LEADING_TAGS_RE.match(best.text)
-            line_out = pysubs2.SSAEvent(start=line_in.start, end=line_in.end, style=best.style)
+            line_out = pysubs2.SSAEvent(start=line_in.start, end=line_in.end, style=best_canonical_style)
             line_out.text = (tags.group(0) if tags else "") + clean_text
             out.append(line_out)
             continue
@@ -438,7 +473,7 @@ def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, ou
     # text, verbatim) is still far better than silently absent - flagged either way for follow-up.
     seen_orphan_keys: set[tuple] = set()
     for e in reference_events:
-        if e.style in standard_styles:
+        if _canonical_style(e.style, reference.styles, standard_styles) in standard_styles:
             continue
         key = (e.style, e.start, e.end)
         if key in used_keys or key in seen_orphan_keys:
