@@ -308,15 +308,20 @@ def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, ou
     lyric text in the generated file at all - those specific lines simply have no caption.
 
     Each matched (non-orphan) flagged entry also carries "suspicious_match": True when the
-    translated text's length is more than 2x or less than 0.5x its matched reference line's own
-    length - found live as a real, separate content-loss bug: a plain SRT line with no genuine
-    reference counterpart at all (a translator's own end-credit, unrelated to anything in the
-    English track) still has to match *something* since the pool is never empty as long as one
-    on-screen-text event exists nearby, and it silently overwrote a real title card ("The
-    Missing") that happened to share its timing - the credit's own text (28 chars) was 2.5x the
-    title's (11 chars), well past where `_shrink_to_fit`'s own 1.6x cap even applies. A count this
-    far off is a strong hint the match itself is wrong, not just that the translation runs long -
-    surfaced for extra scrutiny during review rather than silently accepted.
+    translated text's length is more than 1.6x or less than 0.625x (1/1.6) its matched reference
+    line's own length - the same 1.6x this module already treats as the outer limit
+    `_shrink_to_fit` can compensate for, so this flags exactly the cases that heuristic can no
+    longer fully paper over. Found live as a real, separate content-loss bug: a plain SRT line
+    with no genuine reference counterpart at all (a translator's own end-credit, unrelated to
+    anything in the English track) still has to match *something* since the pool is never empty
+    as long as one on-screen-text event exists nearby, and it silently overwrote a real title card
+    ("The Missing") that happened to share its timing - the credit's own text (28 chars) was 2.5x
+    the title's (11 chars). A second real case (episode 10, "511 Kinderheim" vs. the same 28-char
+    credit) landed at exactly 2.0x - confirmed live that an earlier 2.0x/0.5x threshold missed it
+    outright, which is why this uses the tighter, principled 1.6x boundary instead of an arbitrary
+    round number. A ratio this far off is a strong hint the match itself is wrong, not just that
+    the translation runs long - surfaced for extra scrutiny during review rather than silently
+    accepted.
 
     Returns a dict of counters ({total, matched_signs, fallback_default, nonstandard_position,
     suspicious_match}) for the caller to log, plus "flagged": the same list
@@ -389,9 +394,9 @@ def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, ou
         flagged.append({
             "start": _fmt_ms(best.start), "end": _fmt_ms(best.end),
             "style": best.style, "text": translated_plain,
-            "suspicious_match": length_ratio > 2.0 or length_ratio < 0.5,
+            "suspicious_match": length_ratio > 1.6 or length_ratio < 0.625,
         })
-        if length_ratio > 2.0 or length_ratio < 0.5:
+        if length_ratio > 1.6 or length_ratio < 0.625:
             counters["suspicious_match"] += 1
 
     # Preserve on-screen-text reference events with no corresponding translated line at all - e.g.
