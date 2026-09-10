@@ -27,7 +27,7 @@ from solare.engine.mux import (
 )
 from solare.engine.opensubtitles import OpenSubtitlesClient, download_path, fetch_subtitle_for_item
 from solare.engine.preprocess import generate_vpy, needs_preprocessing
-from solare.engine.subtitle_style import generate_styled_subtitle
+from solare.engine.subtitle_style import find_duplicate_captions, find_nonstandard_events, generate_styled_subtitle
 from solare.engine.queue import QueueItem, build_queue, clean_title, has_unfinished_work, output_name
 from solare.engine.relocate import relocate_job_dir
 from solare.engine.runner import JobRunner, RunPhase, RunState
@@ -63,6 +63,8 @@ __all__ = [
     "clean_title",
     "download_path",
     "fetch_subtitle_for_item",
+    "find_duplicate_captions",
+    "find_nonstandard_events",
     "generate_styled_subtitle",
     "generate_vpy",
     "has_unfinished_work",

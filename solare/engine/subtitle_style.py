@@ -19,12 +19,20 @@ _ASS_OVERRIDE_RE = re.compile(r"\{\\[^}]*\}")
 # Matches the override-tag block(s) at the very start of an ASS line's raw text, if any - pysubs2
 # keeps override tags embedded in .text, e.g. "{\\an8}Some text".
 _LEADING_TAGS_RE = re.compile(r"^(\{\\[^}]*\})+")
+_FS_TAG_RE = re.compile(r"\\fs([\d.]+)")
 # Plain spoken dialogue, rendered at the style's own default bottom-center box with no per-line
 # positioning - every other style in this project's Monster (2004) reference tracks (signs, ED,
 # ED-ENG, NCOP, X-Files) is a hand-placed on-screen-text overlay (credits, karaoke, signage) baked
 # to a specific spot in a specific frame, not something a timing/text swap alone can validate is
 # still correctly placed for different (usually longer) translated text - see find_nonstandard_events.
 _STANDARD_STYLES = {"Default", "Default - Italic"}
+# Ending/opening theme song lyrics - never auto-embedded (translated OR verbatim) into a generated
+# subtitle: unlike a name card or location sign, lyrics are unambiguously copyrighted creative
+# text, not a proper noun with no real translation decision to make. A reference event in one of
+# these styles is treated as if it doesn't exist at all - never matched to a plain line, never
+# preserved as an "untranslated" orphan - so the ending song simply plays without a caption for
+# these specific lines rather than this tool ever generating or reproducing lyric text itself.
+_LYRIC_STYLES = {"ED", "ED-ENG"}
 
 
 def _overlap(a: pysubs2.SSAEvent, b: pysubs2.SSAEvent) -> int:
@@ -36,6 +44,58 @@ def _fmt_ms(ms: int) -> str:
     m, rem = divmod(rem, 60_000)
     s, ms = divmod(rem, 1_000)
     return f"{h:d}:{m:02d}:{s:02d}.{ms:03d}"
+
+
+def _layer_group(reference_events: list[pysubs2.SSAEvent], anchor: pysubs2.SSAEvent) -> list[pysubs2.SSAEvent]:
+    """Every reference event sharing `anchor`'s style AND exact start/end - confirmed live as how
+    this source builds a shadow-plus-foreground on-screen-text effect (e.g. Monster's Dusseldorf
+    location card: a solid-black Layer 1 event underneath a near-white Layer 2 event, same style/
+    timing, different colour/blur). A single translated line has to reproduce every layer in the
+    group, not just whichever one happened to be picked as the timing match - matching only the
+    black shadow layer renders solid black text with no white foreground on top of it at all."""
+    return sorted(
+        (e for e in reference_events if e.style == anchor.style and e.start == anchor.start and e.end == anchor.end),
+        key=lambda e: e.layer,
+    )
+
+
+def _sanitize_onscreen_text(text: str) -> str:
+    """A colon in on-screen text styled with certain custom fonts can trigger a broken/missing
+    glyph - confirmed live on Monster's "X-Files" display font (used for its opening verse card):
+    a colon anywhere in the string made HarfBuzz's shaping drop every character *before* it in the
+    same run, not just render a tofu box for the colon itself - "APOCALIPSE 13: 1-4" displayed as
+    only "1-4", and the user reproduced the identical failure live in Aegisub with unrelated text
+    ("TESTE: 12-3" -> "12-3"), confirming it's the character, not this specific string. A comma
+    reads acceptably in its place and is already proven to render correctly in every other
+    on-screen-text line in this source. Applied to every non-standard-style line generated here,
+    not just the one this was first found on - we don't know which other decorative fonts in this
+    or other titles share the same defect, and a colon is rare enough in on-screen text that a
+    blanket substitution costs nothing."""
+    return text.replace(":", ",")
+
+
+def _insert_tag(tags: str, tag: str) -> str:
+    idx = tags.rfind("}")
+    return tags[:idx] + tag + tags[idx:] if idx != -1 else "{" + tag + "}" + tags
+
+
+def _shrink_to_fit(tags: str, style_fontsize: float, source_plain: str, translated_plain: str) -> str:
+    """On-screen text is hand-positioned against one specific frame with just enough room for the
+    *source* line's own length - confirmed live as a real, separate bug from the CRLF/timing ones:
+    a Portuguese line meaningfully longer than its English counterpart wrapped to an extra line
+    inside the same tight slot, overflowing into the very on-screen text (a fixed, immovable part
+    of the video) it was supposed to sit *between*. Shrinking the font in proportion to how much
+    longer the translation is keeps it inside the space the source line actually fit in - capped at
+    1.6x so a wildly longer translation gets a legibility floor instead of shrinking to nothing
+    (still flagged either way for a human to check)."""
+    ratio = len(translated_plain) / max(1, len(source_plain))
+    if ratio <= 1.05:
+        return tags
+    scale = min(ratio, 1.6)
+    match = _FS_TAG_RE.search(tags)
+    base_fs = float(match.group(1)) if match else style_fontsize
+    new_tag = f"\\fs{base_fs / scale:.2f}"
+    return tags[: match.start()] + new_tag + tags[match.end() :] if match else _insert_tag(tags, new_tag)
 
 
 def find_nonstandard_events(ass_path: Path) -> list[dict]:
@@ -62,6 +122,47 @@ def find_nonstandard_events(ass_path: Path) -> list[dict]:
         if e.style not in _STANDARD_STYLES
     ]
     return sorted(flagged, key=lambda f: f["start"])
+
+
+def find_duplicate_captions(ass_path: Path, window_ms: int = 5000) -> list[dict]:
+    """Flags a plain-dialogue (_STANDARD_STYLES) event whose text closely matches a nearby
+    non-standard-style event's text - confirmed live as a real, recurring OpenSubtitles pattern on
+    this source: the plain-text translation sometimes transcribes an on-screen name/location card
+    as if it were spoken dialogue (standalone "EVA HEINEMANN" / "DR. BECKER" lines), duplicating
+    what the matched or orphan-preserved signs card already displays - found live via the user's
+    own read-through after the "prefer standard style" matching fix (which fixed the *category*
+    mismatch bug but does nothing about a genuinely separate, redundant plain-text line that was
+    never wrongly matched to begin with). Only short dialogue lines (at most 4 words after
+    stripping punctuation - long enough that a real sentence won't false-positive against a bare
+    name) within `window_ms` of a non-standard event with matching (case-folded,
+    punctuation-stripped) text are flagged. Returns candidates for a human to confirm before
+    deleting - a short line that coincidentally repeats a name as real dialogue is possible, if
+    rare, so this doesn't delete anything itself."""
+    subs = pysubs2.load(str(ass_path))
+    nonstandard = [e for e in subs if e.style not in _STANDARD_STYLES]
+
+    def normalize(text: str) -> str:
+        plain = _LEADING_TAGS_RE.sub("", text).replace("\\N", " ").strip().casefold()
+        return re.sub(r"[^\w\s]", "", plain)
+
+    duplicates = []
+    for d in subs:
+        if d.style not in _STANDARD_STYLES:
+            continue
+        d_norm = normalize(d.text)
+        if not d_norm or len(d_norm.split()) > 4:
+            continue
+        for n in nonstandard:
+            if abs(n.start - d.start) > window_ms:
+                continue
+            if d_norm == normalize(n.text):
+                duplicates.append({
+                    "start": _fmt_ms(d.start), "end": _fmt_ms(d.end),
+                    "text": _LEADING_TAGS_RE.sub("", d.text).replace("\\N", " "),
+                    "duplicates_style": n.style, "duplicates_at": _fmt_ms(n.start),
+                })
+                break
+    return duplicates
 
 
 def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, out_path: Path) -> dict:
@@ -126,6 +227,20 @@ def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, ou
     source language, which is exactly what a translator timed that track for; only video-timed
     on-screen text should ever be forced to match the source's own clock.
 
+    Two more real, separate on-screen-text bugs fixed here, found by actually burning the output
+    onto real frames rather than trusting timestamps/coordinates alone (see
+    history/pitfalls.md): a reference sign built from multiple stacked events at the identical
+    style+start+end (a shadow-colour layer under a near-white foreground layer, this source's own
+    technique for a legible caption against a busy background) needs every layer reproduced, not
+    just whichever one the timing match happened to land on - see _layer_group. And a reference
+    on-screen-text event with no plain-text line ever time-overlapping it at all (typically a
+    character name card - nobody speaks a name aloud) is preserved verbatim, untranslated, in a
+    pass after the main loop, rather than silently vanishing from the output entirely - EXCEPT for
+    _LYRIC_STYLES (ending/opening theme lyrics), which are excluded from every step above, not just
+    this one: unlike a name or location, lyrics are unambiguously copyrighted creative text, so this
+    function never matches a plain line to one, never preserves one untranslated, never reproduces
+    lyric text in the generated file at all - those specific lines simply have no caption.
+
     Returns a dict of counters ({total, matched_signs, fallback_default, nonstandard_position}) for
     the caller to log, plus "flagged": the same list find_nonstandard_events() would produce on the
     output file, so a caller always gets it back without a second pass - `nonstandard_position`
@@ -142,37 +257,88 @@ def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, ou
     out.info.update(reference.info)
     out.styles = dict(reference.styles)  # verbatim copy - same fonts/colors/margins/sizes
 
+    # Comment-type events (a fansubber's own private typesetting notes, e.g. "#ref 01" - confirmed
+    # live as real content in this source's NCOP entries) were never meant to display at all;
+    # lyric-style events are excluded per _LYRIC_STYLES above. Treating both as absent from the
+    # reference entirely - rather than filtering them out separately in each place `reference` gets
+    # iterated - keeps every one of matching/layer-grouping/orphan-preservation below correct by
+    # construction instead of by remembering to re-check both conditions everywhere.
+    reference_events = [e for e in reference if not e.is_comment and e.style not in _LYRIC_STYLES]
+
     counters = {"total": 0, "matched_signs": 0, "fallback_default": 0, "nonstandard_position": 0}
     flagged: list[dict] = []
+    used_keys: set[tuple] = set()
     for line_in in plain:
-        candidates = [e for e in reference if _overlap(e, line_in) > 0]
+        candidates = [e for e in reference_events if _overlap(e, line_in) > 0]
         standard_candidates = [e for e in candidates if e.style in _STANDARD_STYLES]
         pool = standard_candidates or candidates
         best = min(pool, key=lambda e: abs(e.start - line_in.start), default=None)
         clean_text = _ASS_OVERRIDE_RE.sub("", line_in.text)
-        line_out = pysubs2.SSAEvent(start=line_in.start, end=line_in.end)
-        if best is not None:
-            line_out.style = best.style
-            tags = _LEADING_TAGS_RE.match(best.text)
-            line_out.text = (tags.group(0) if tags else "") + clean_text
-            if best.style not in _STANDARD_STYLES:
-                line_out.start, line_out.end = best.start, best.end
-            if best.style == "signs":
-                counters["matched_signs"] += 1
-        else:
-            line_out.style = "Default"
-            line_out.text = clean_text
-            counters["fallback_default"] += 1
-        out.append(line_out)
         counters["total"] += 1
-        if line_out.style not in _STANDARD_STYLES:
-            counters["nonstandard_position"] += 1
-            flagged.append({
-                "start": _fmt_ms(line_out.start),
-                "end": _fmt_ms(line_out.end),
-                "style": line_out.style,
-                "text": _LEADING_TAGS_RE.sub("", line_out.text).replace("\\N", " "),
-            })
+
+        if best is None:
+            out.append(pysubs2.SSAEvent(start=line_in.start, end=line_in.end, style="Default", text=clean_text))
+            counters["fallback_default"] += 1
+            continue
+
+        if best.style in _STANDARD_STYLES:
+            tags = _LEADING_TAGS_RE.match(best.text)
+            line_out = pysubs2.SSAEvent(start=line_in.start, end=line_in.end, style=best.style)
+            line_out.text = (tags.group(0) if tags else "") + clean_text
+            out.append(line_out)
+            continue
+
+        # On-screen text (signs/credits/karaoke): copy the reference's own timing (see docstring),
+        # collapse the plain source's own dialogue-oriented line break (built for a normal subtitle
+        # box, not a small hand-positioned caption), shrink to fit if the translation runs
+        # meaningfully longer than the source line it's replacing, and reproduce every stacked
+        # layer, not just whichever one the timing match happened to land on.
+        if best.style == "signs":
+            counters["matched_signs"] += 1
+        used_keys.add((best.style, best.start, best.end))
+        translated_plain = _sanitize_onscreen_text(clean_text.replace("\\N", " "))
+        source_plain = _LEADING_TAGS_RE.sub("", best.text).replace("\\N", " ")
+        style_fontsize = reference.styles[best.style].fontsize if best.style in reference.styles else 27.0
+        for member in _layer_group(reference_events, best):
+            tags_match = _LEADING_TAGS_RE.match(member.text)
+            tags = _shrink_to_fit(tags_match.group(0) if tags_match else "{}", style_fontsize, source_plain, translated_plain)
+            event = pysubs2.SSAEvent(start=best.start, end=best.end, style=member.style, layer=member.layer)
+            event.text = tags + translated_plain
+            out.append(event)
+        counters["nonstandard_position"] += 1
+        flagged.append({
+            "start": _fmt_ms(best.start), "end": _fmt_ms(best.end),
+            "style": best.style, "text": translated_plain,
+        })
+
+    # Preserve on-screen-text reference events with no corresponding translated line at all - e.g.
+    # a character name card, since nobody speaks a name aloud so no plain-text line will ever
+    # time-overlap it. Confirmed live as a real gap once the cross-category mismatch fix above
+    # stopped letting a nearby dialogue line steal a name card's slot: two name cards vanished from
+    # the output entirely rather than picking up a translation, since the loop above only ever
+    # visits reference events that some plain line actually matched. Untranslated (the source's own
+    # text, verbatim) is still far better than silently absent - flagged either way for follow-up.
+    seen_orphan_keys: set[tuple] = set()
+    for e in reference_events:
+        if e.style in _STANDARD_STYLES:
+            continue
+        key = (e.style, e.start, e.end)
+        if key in used_keys or key in seen_orphan_keys:
+            continue
+        seen_orphan_keys.add(key)
+        for member in _layer_group(reference_events, e):
+            member_tags_match = _LEADING_TAGS_RE.match(member.text)
+            member_tags = member_tags_match.group(0) if member_tags_match else ""
+            member_visible = _sanitize_onscreen_text(member.text[len(member_tags):])
+            out.append(pysubs2.SSAEvent(
+                start=member.start, end=member.end, style=member.style, layer=member.layer,
+                text=member_tags + member_visible,
+            ))
+        counters["nonstandard_position"] += 1
+        flagged.append({
+            "start": _fmt_ms(e.start), "end": _fmt_ms(e.end), "style": e.style,
+            "text": "[untranslated] " + _sanitize_onscreen_text(_LEADING_TAGS_RE.sub("", e.text).replace("\\N", " ")),
+        })
     counters["flagged"] = flagged
 
     # pysubs2's .save() writes the platform line ending (CRLF on Windows) - force LF regardless,
