@@ -45,25 +45,32 @@ _FALLBACK_STANDARD_STYLES = {"Default", "Default - Italic"}
 _LYRIC_STYLE_RE = re.compile(r"^(NC)?(OP|ED)\d*(-\w+)?$", re.IGNORECASE)
 
 
+_DEFAULT_NAME_RE = re.compile(r"^default\b", re.IGNORECASE)
+
+
 def _standard_styles(styles: dict) -> set[str]:
     """Determines which style names represent plain spoken dialogue (as opposed to a hand-placed
-    on-screen-text overlay), by comparing each style's own (Fontname, Fontsize) against the
-    "Default" style's - confirmed live as necessary, not just more robust in theory: episode 2's
-    reference introduces "Default - Italic an8" (identical to "Default - Italic" - same Gandhi
-    Sans 75 - except Alignment 8/top instead of 2/bottom, presumably a phone-call or narration line
-    placed above whatever's normally at the bottom of that frame), a real ordinary dialogue
-    variant that a fixed set of known names (this project's original approach) would have wrongly
-    flagged as needing frame-by-frame position review, since it had never been seen before. This
-    source always gives on-screen text (signs/credits/karaoke) a completely different, often
-    decorative font from spoken dialogue (Arial/Souvenir Lt BT/AvantGarde Md BT/X-Files/etc. vs
-    Gandhi Sans) - matching font+size against Default is a reliable, self-adapting signal
-    regardless of what a given episode's own fansubber happened to name a dialogue variant."""
+    on-screen-text overlay), two ways: matching each style's own (Fontname, Fontsize) against the
+    "Default" style's, OR the style's own name starting with "Default" - confirmed live as both
+    necessary, not just more robust in theory, across three separate real cases: episode 2's
+    "Default - Italic an8" (same Gandhi Sans 75 as "Default - Italic", just top-aligned - a font+
+    size match); episode 31's event-level "default" (lowercase, a case-typo of the real "Default" -
+    handled by `_canonical_style`, not here); and episode 46's "Default - C" (real spoken dialogue,
+    "Who are you!?" / "Monster...", deliberately switched to Arial from the episode's own Jesaya
+    Free for dramatic emphasis on those two lines - a *different font*, which the font+size check
+    alone doesn't catch, but the name itself still starts with "Default", same as every other
+    dialogue variant this source has ever used). Every on-screen-text style seen across this whole
+    project (signs, Monster-Title, ED/ED2/ED3, Names2, Titles1, Location, DVD Titles2) has never
+    once used a "Default"-prefixed name - it's reserved, by this fansubber's own convention, for
+    dialogue variants specifically, making the name itself a safe, independent second signal
+    alongside the font/size comparison rather than a replacement for it."""
     if "Default" not in styles:
-        return set(_FALLBACK_STANDARD_STYLES)
+        return {name for name in styles if _DEFAULT_NAME_RE.match(name)} or set(_FALLBACK_STANDARD_STYLES)
     default = styles["Default"]
     return {
         name for name, style in styles.items()
-        if style.fontname == default.fontname and style.fontsize == default.fontsize
+        if (style.fontname == default.fontname and style.fontsize == default.fontsize)
+        or _DEFAULT_NAME_RE.match(name)
     }
 
 
