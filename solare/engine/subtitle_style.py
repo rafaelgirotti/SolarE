@@ -428,7 +428,10 @@ def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, ou
     reference_events = [e for e in reference if not e.is_comment and not _LYRIC_STYLE_RE.match(e.style)]
     standard_styles = _standard_styles(reference.styles)
 
-    counters = {"total": 0, "matched_signs": 0, "fallback_default": 0, "nonstandard_position": 0, "suspicious_match": 0}
+    counters = {
+        "total": 0, "matched_signs": 0, "fallback_default": 0, "nonstandard_position": 0,
+        "suspicious_match": 0, "credit_line_dropped": 0,
+    }
     flagged: list[dict] = []
     used_keys: set[tuple] = set()
     for line_in in plain:
@@ -439,11 +442,11 @@ def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, ou
         # sense - it's metadata the uploader added, with no reference counterpart to match against
         # and a predictable habit of landing in the same end-of-episode window as a real title
         # card. Routed around the matching pool entirely (see _is_credit_line) rather than left to
-        # compete for a slot it was never part of.
+        # compete for a slot it was never part of. Dropped outright, not emitted - this release
+        # collects every episode's translator credit into one shared reference file instead of
+        # repeating it inline in each episode.
         if _is_credit_line(clean_text):
-            credit_text = re.sub(r"^\s*Legendas\s*[:,]\s*", "Legendas - ", clean_text, flags=re.IGNORECASE)
-            out.append(pysubs2.SSAEvent(start=line_in.start, end=line_in.end, style="Default", text=credit_text))
-            counters["fallback_default"] += 1
+            counters["credit_line_dropped"] += 1
             continue
 
         candidates = [e for e in reference_events if _overlap(e, line_in) > 0]
@@ -461,8 +464,19 @@ def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, ou
 
         best_canonical_style = _canonical_style(best.style, reference.styles, standard_styles)
         if best_canonical_style in standard_styles:
+            # marginl/r/v copied from the reference event, not just its timing and inline tags -
+            # a per-line margin override (e.g. MarginV=32 instead of the style's own default) is
+            # how the source fansub nudges a specific dialogue line away from a sign or a face,
+            # and silently dropping it here put the translated line right back into the sign's own
+            # space. Confirmed live: S01E01's "should be the one waking up to a kiss" reference
+            # line carries MarginV=32 specifically to clear the "Eva Heinemann" name card sitting
+            # right below it - without copying that override, the generated Portuguese line fell
+            # back to the style's default MarginV (90) and collided with the card instead.
             tags = _LEADING_TAGS_RE.match(best.text)
-            line_out = pysubs2.SSAEvent(start=line_in.start, end=line_in.end, style=best_canonical_style)
+            line_out = pysubs2.SSAEvent(
+                start=line_in.start, end=line_in.end, style=best_canonical_style,
+                marginl=best.marginl, marginr=best.marginr, marginv=best.marginv,
+            )
             line_out.text = (tags.group(0) if tags else "") + clean_text
             out.append(line_out)
             continue
