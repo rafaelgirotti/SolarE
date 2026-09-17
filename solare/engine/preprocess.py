@@ -38,6 +38,14 @@ def needs_preprocessing(config: TitleConfig) -> bool:
     )
 
 
+def supports_index_cache(chunk_method: str) -> bool:
+    """Whether `chunk_method` has a VapourSynth-plugin loader this module knows how to redirect
+    the chunk-index cache for (see `_cache_kwarg`) - used by av1an.py to decide whether it's worth
+    generating a passthrough .vpy (no real filtering, just the loader + cachedir) purely to keep
+    that index file out of the source folder even for a title with no real preprocessing."""
+    return chunk_method in _LOADERS
+
+
 def _parse_crop(crop: str) -> tuple[int, int, int, int]:
     """`video.crop` is the same "w:h:x:y" shape ffmpeg's own `-vf crop=` filter takes (that's
     where it normally goes - see av1an.py's build_args()) - reused as-is here rather than

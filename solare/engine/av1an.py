@@ -13,6 +13,12 @@ points at a generated VapourSynth script (see engine/preprocess.py) instead of t
 file - av1an accepts a `.vpy` script as input directly, so chunking/encoding reads straight off
 the filtered output with no separate full-file transcode pass.
 
+Even when none of those is configured, `-i` still points at a generated (unfiltered) passthrough
+.vpy rather than the raw source file directly, as long as the chunk method has a known VapourSynth
+loader (see preprocess.supports_index_cache()) - purely so the source-plugin's own chunk-index
+cache (e.g. lsmash's `<name>.lwi`) lands next to solare's own output instead of littering the
+external source folder, which is where it goes by default with no cachedir override.
+
 If `video.upscale` specifically is configured, av1an's own `--proxy` also points at a second,
 cheaper generated script (same pipeline, upscale filter skipped) used only for scene-detection -
 see preprocess.generate_proxy_vpy()'s own docstring for why: without it, scene-detection decodes
@@ -32,7 +38,12 @@ import psutil
 from solare import platform as solare_platform
 from solare.engine.chunk_progress import ChunkProgress, find_latest_log, parse_chunk_progress
 from solare.engine.config import TitleConfig
-from solare.engine.preprocess import generate_proxy_vpy, generate_vpy, needs_preprocessing
+from solare.engine.preprocess import (
+    generate_proxy_vpy,
+    generate_vpy,
+    needs_preprocessing,
+    supports_index_cache,
+)
 
 
 @dataclass
@@ -96,6 +107,17 @@ class Av1anRunner:
                 proxy_path = self._video_out.parent / f"{self._video_out.stem}.proxy.vpy"
                 generate_proxy_vpy(config, self._src_file, proxy_path, self._chunk_method)
                 self._proxy_path = proxy_path
+        elif supports_index_cache(self._chunk_method):
+            # No real filtering needed for this title, but av1an's own chunking still builds a
+            # source-plugin index (e.g. lsmash's <name>.lwi) - left to its default, that lands
+            # right next to src_file, littering the external source folder rather than anything
+            # solare owns. A minimal passthrough .vpy (just the loader line + cachedir, no actual
+            # filters) gets the exact same cache-redirection generate_vpy() already does for a
+            # real preprocessing script, without pretending this title needs one.
+            self._video_out.parent.mkdir(parents=True, exist_ok=True)
+            vpy_path = self._video_out.parent / f"{self._video_out.stem}.index.vpy"
+            generate_vpy(config, self._src_file, vpy_path, self._chunk_method)
+            self._input_path = vpy_path
 
     def build_args(self) -> list[str]:
         video = self._config.video
