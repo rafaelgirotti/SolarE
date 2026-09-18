@@ -119,6 +119,27 @@ class SolarEApp(App):
     ) -> None:
         super().__init__()
         self._hw_monitor = HardwareMonitor()
+        # Decided once, up front, rather than re-evaluated every refresh: whether the hw panel is
+        # worth showing at all. CPU load/RAM (psutil) are cross-platform and practically never
+        # unavailable, so they're not the bar - the panel earns its place only if it has real
+        # enrichment beyond that (Afterburner temp/power, or an NVIDIA GPU via pynvml). Same
+        # any-of-these-fields check _render_hw_panel already uses to decide whether to print a GPU
+        # line at all, reused here at the whole-panel level.
+        initial_hw = self._hw_monitor.poll()
+        self._hw_panel_enabled = (
+            initial_hw.cpu_temp_c is not None
+            or initial_hw.cpu_power_w is not None
+            or any(
+                v is not None
+                for v in (
+                    initial_hw.gpu_temp_c,
+                    initial_hw.gpu_load_pct,
+                    initial_hw.gpu_power_w,
+                    initial_hw.gpu_mem_used_mb,
+                    initial_hw.gpu_mem_total_mb,
+                )
+            )
+        )
         self._job_source: LiveJobSource | None = None
         self._config: TitleConfig | None = None
         self._phase = AppPhase.IDLE
@@ -131,7 +152,13 @@ class SolarEApp(App):
         self._solar_override_active = False  # mirrors the real JobRunner state - see _render_job_panel
         self._solar_poller: SolarPoller | None = None
         self._solar_unavailable_reason: str | None = None
-        if _CREDENTIALS_PATH.is_file():
+        # Same "decide once, up front" reasoning as _hw_panel_enabled above: no credentials.json
+        # means the user isn't using Growatt at all, so the panel doesn't appear rather than
+        # showing a permanent "not configured" placeholder. A file that *is* present but fails to
+        # load (bad JSON, a real API error) is a different case - the user is clearly trying to use
+        # this, so the panel stays up and shows the error (see _render_solar_panel).
+        self._solar_panel_enabled = _CREDENTIALS_PATH.is_file()
+        if self._solar_panel_enabled:
             try:
                 self._solar_poller = SolarPoller(GrowattCredentials.from_file(_CREDENTIALS_PATH))
             except RuntimeError as e:
@@ -149,8 +176,10 @@ class SolarEApp(App):
                 empty_label_color=colors.UNKNOWN,
             )
             yield Static(id="job_footer")
-        yield Static(id="hw_panel")
-        yield Static(id="solar_panel")
+        if self._hw_panel_enabled:
+            yield Static(id="hw_panel")
+        if self._solar_panel_enabled:
+            yield Static(id="solar_panel")
         # wrap=True (not the default False) - a real log line's full text (a scene-release
         # filename with every audio track spelled out) is routinely wider than the panel, and
         # wrap=False turns that into a horizontal scrollbar whose thumb is nearly always near
@@ -163,7 +192,8 @@ class SolarEApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.query_one("#hw_panel", Static).border_title = " Hardware "
+        if self._hw_panel_enabled:
+            self.query_one("#hw_panel", Static).border_title = " Hardware "
         self.query_one("#log_panel", RichLog).border_title = " Recent log output "
 
         if self._solar_poller is not None:
@@ -370,8 +400,10 @@ class SolarEApp(App):
         return True
 
     def _refresh(self) -> None:
-        self._render_hw_panel(self._hw_monitor.poll())
-        self._render_solar_panel(self._current_solar_state())
+        if self._hw_panel_enabled:
+            self._render_hw_panel(self._hw_monitor.poll())
+        if self._solar_panel_enabled:
+            self._render_solar_panel(self._current_solar_state())
         if self._job_source is not None:
             self._render_job_panel(self._job_source.poll_job())
             self._render_log_panel(self._job_source.log_lines)
