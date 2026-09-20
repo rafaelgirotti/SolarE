@@ -149,7 +149,7 @@ def add_subtitle_to_existing_output(
 ) -> None:
     """Adds one new subtitle track to an ALREADY-FINISHED mux (a completed episode's output file),
     for backfilling a subtitle that wasn't available when it was first encoded - see
-    history/backfill_monster_subtitles.py. Unlike mux_episode() (which builds a fresh mux from raw
+    local/backfill_monster_subtitles.py. Unlike mux_episode() (which builds a fresh mux from raw
     pieces produced this same run), this remuxes an existing file: every stream already in it
     passes through unchanged (`-map 0`, `-c copy`, disposition preserved automatically on copy)
     plus the new subtitle as one added stream. `demote_language` (e.g. "eng"), if given, is an
@@ -189,7 +189,7 @@ def remove_subtitle_from_existing_output(
     """Strips one existing subtitle stream (type-relative index, same convention as
     find_stream_index/SubtitleSource) from an ALREADY-FINISHED mux, e.g. to back out a
     previously-added track that turned out broken in playback - see
-    history/strip_monster_pt_subtitles.py. `promote_language` (e.g. "eng"), if given, is an
+    local/strip_monster_pt_subtitles.py. `promote_language` (e.g. "eng"), if given, is an
     existing subtitle language to flip back to default - `-c copy` alone doesn't recompute
     disposition, so whichever track should become the new default needs it set explicitly here.
     Same temp-file-then-replace safety as add_/replace_subtitle_in_existing_output - a failed run

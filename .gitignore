@@ -23,15 +23,15 @@ solar-cache.json
 config/*.json
 !config/config.example.json
 
-# Per-title investigation history - genuinely useful locally (full context, file paths,
-# source-release specifics for encoding decisions), but never meant to be public even after
-# this project itself goes public. Ignored wholesale, not just individual files, so a new file
-# dropped in here can never accidentally end up staged.
-history/
+# Per-title investigation notes, one-off scripts, and test samples - genuinely useful locally
+# (full context, file paths, source-release specifics for encoding decisions), but never meant
+# to be public. Ignored wholesale, not just individual files, so a new file
+# dropped in here can never accidentally end up staged. (Named "local" - formerly "history".)
+local/
 
 # Encoding-domain methodology/decisions/tool notes ported from the pre-solare pipeline (see
 # docs/private/README.md) - genuinely useful local reference, but the same "no encoding-domain
-# wisdom in the public docs" rule as history/ applies here too. Ignored wholesale like history/.
+# wisdom in the public docs" rule as local/ applies here too. Ignored wholesale like local/.
 docs/private/
 
 # Local encoder tool binaries (av1an's dependencies: ffmpeg, x265, SVT-AV1, MKVToolNix,

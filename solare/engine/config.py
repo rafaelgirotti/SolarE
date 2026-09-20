@@ -85,7 +85,7 @@ class UpscaleSettings:
     # tools/vsmlrt.md) - used only to show a rough, explicitly-approximate progress estimate during
     # av1an's own scene-detection pass, which decodes the whole source through this same filter
     # chain but reports zero real progress of its own (confirmed empirically - see
-    # history/pitfalls.md). Optional: without it, the dashboard just shows a plain "detecting
+    # local/pitfalls.md). Optional: without it, the dashboard just shows a plain "detecting
     # scenes..." status with no percentage, same as before this field existed. Deliberately not
     # auto-benchmarked - a wrong/stale number here is worse than none (a confidently-displayed
     # estimate that's way off reads as more broken than an honest "we don't know").

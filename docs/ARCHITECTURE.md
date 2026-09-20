@@ -33,8 +33,8 @@ transcode pass runs first.
 ## Repo structure
 - `docs/` - committed, kept strictly to this tool's own architecture (this file). No personal
   file paths, no encoding-domain specifics, no development history.
-- `history/` - gitignored; personal notes, per-title encoding investigation, and lessons learned
-  along the way live here instead.
+- `local/` - gitignored; personal notes, per-title encoding investigation, test samples, and
+  lessons learned along the way live here instead.
 - `config/` - only `config.example.json` is committed; real per-title configs are gitignored.
 
 ## Publishing

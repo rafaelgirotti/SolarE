@@ -19,13 +19,13 @@ Read this first, every session.
 - `config/*.json` except `config/config.example.json` - real per-title configs carry the user's
   actual file paths. If you create or edit a real config, confirm it's not `git add`-able before
   committing (`.gitignore` already covers this, but double-check after any broad `git add`).
-- `history/` (the whole folder) - per-title investigation logs, ported from a prior project,
-  full of real file paths and specifics about which source releases were tested. Useful locally,
-  never meant to be public even after this repo itself goes public.
+- `local/` (the whole folder) - per-title investigation logs, one-off scripts, and test samples,
+  ported from a prior project, full of real file paths and specifics about which source releases
+  were tested. Useful locally, never meant to be public even after this repo itself goes public.
 - `credentials.json` / `.env` - the Growatt API login and any other secrets.
 - Before any commit that touches something outside `solare/`, `docs/`, or top-level
   project files (pyproject.toml, README, etc.), double-check `git status` for anything that
-  looks like it strayed from `config/` or `history/` despite the ignore rules.
+  looks like it strayed from `config/` or `local/` despite the ignore rules.
 
 ## Python: always `uv`, never system Python/pip
 Never call `python`/`pip` directly. `uv run` / `uv sync` / `uv add` for everything - this machine
@@ -49,7 +49,7 @@ project is a general-purpose orchestrator, not a record of one person's encoding
 development history, and mixing either in would make the public repo read as that instead.
 
 Bugs/lessons learned, and any backstory behind *why* a decision was made (not just what it is),
-go in `history/pitfalls.md` instead - never committed, but still worth writing down for your own
+go in `local/pitfalls.md` instead - never committed, but still worth writing down for your own
 future reference, with the mechanism and the fix, not just "fixed a bug." When genuinely
-uncertain whether something belongs in committed `docs/` or private `history/`, default to
-`history/` and ask rather than guess.
+uncertain whether something belongs in committed `docs/` or private `local/`, default to
+`local/` and ask rather than guess.
