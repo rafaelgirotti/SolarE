@@ -1,0 +1,31 @@
+# Normalize line endings to LF in the repository regardless of which platform (Windows/Linux/Mac)
+# or autocrlf setting touches a file - without this, what actually gets stored depends on whoever
+# committed last, which is exactly what produces noisy full-file CRLF/LF diffs and incompatible
+# git blame/merge behavior across machines. Each platform's own git client still handles local
+# checkout conversion via its own core.autocrlf, if it wants to - this only pins what's *stored*.
+* text=auto eol=lf
+
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.lock text eol=lf
+*.tcss text eol=lf
+*.txt text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+LICENSE text eol=lf
+
+# Windows-only scripts, if any land later, should keep native CRLF - most Windows tools (double-
+# clicking a .bat, some PowerShell hosts) are still fussy about LF-only line endings.
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Common binary asset types, if any land later - never touched/converted.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.gif binary
+*.mkv binary
+*.mp4 binary
