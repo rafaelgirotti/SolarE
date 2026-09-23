@@ -98,7 +98,7 @@ class Av1anRunner:
             # so it's already established as solare-owned, av1an-observed-but-not-managed space.
             self._video_out.parent.mkdir(parents=True, exist_ok=True)
             vpy_path = self._video_out.parent / f"{self._video_out.stem}.preprocess.vpy"
-            self._regenerate_vpy_and_invalidate_stale_resume(config, vpy_path)
+            generate_vpy(config, self._src_file, vpy_path, self._chunk_method)
             self._input_path = vpy_path
             if config.video.upscale is not None:
                 # A cheaper stand-in for av1an's own scene-detection pass specifically - see
@@ -117,45 +117,8 @@ class Av1anRunner:
             # real preprocessing script, without pretending this title needs one.
             self._video_out.parent.mkdir(parents=True, exist_ok=True)
             vpy_path = self._video_out.parent / f"{self._video_out.stem}.index.vpy"
-            self._regenerate_vpy_and_invalidate_stale_resume(config, vpy_path)
+            generate_vpy(config, self._src_file, vpy_path, self._chunk_method)
             self._input_path = vpy_path
-
-    def _regenerate_vpy_and_invalidate_stale_resume(self, config: TitleConfig, vpy_path: Path) -> None:
-        """build_args() resumes (`-r`) purely on `done.json` existing in --temp - fine for the
-        common case (a killed/interrupted run on the same paths), but a real, reproducible failure
-        otherwise: if the source or output moved (e.g. a drive got renamed/consolidated and the
-        whole project folder - source, in-progress --temp, done.json and all - was copied to the
-        new location together), the .vpy this run is about to generate embeds the *new* absolute
-        source/cachefile path, while --temp's done.json/chunks.json/split state was built against
-        the *old* one on a previous run. Confirmed live on Ghost in the Shell: SAC_2045 (D:\\arc1
-        moved to H:\\): av1an still resumed, still logged the correct new H:-based script content,
-        but every chunk failed with "x265: unable to open input file <->" and the worker gave up
-        after 3 retries per chunk - the resumed split/chunk state no longer matches a real, valid
-        source. (Also observed but not the actual cause: the resumed run's logged script_text was
-        padded with trailing null bytes out to the *old*, longer path's length - some av1an-side
-        resume-caching quirk, not something this fix relies on to detect the real problem, since
-        solare's own `write_text()` always fully truncates on write and can't produce that itself.)
-
-        Fix: before overwriting vpy_path with this run's content, read what was there from the
-        *previous* run (if any) and compare the embedded loader line - specifically the source/
-        cachefile path, not the whole file, so unrelated content (encoder param changes, e.g.)
-        never triggers this. A changed path means --temp's resume state was built for a source
-        that's no longer there; wipe --temp's contents (not the directory itself, av1an recreates
-        that) so build_args() finds no done.json and starts genuinely fresh instead of attempting
-        an unreliable resume against invalidated state."""
-        old_loader_line = None
-        if vpy_path.exists():
-            for line in vpy_path.read_text().splitlines():
-                if line.startswith("clip = "):
-                    old_loader_line = line
-                    break
-        generate_vpy(config, self._src_file, vpy_path, self._chunk_method)
-        new_loader_line = next(
-            (line for line in vpy_path.read_text().splitlines() if line.startswith("clip = ")), None
-        )
-        if old_loader_line is not None and old_loader_line != new_loader_line and self._temp_dir.exists():
-            for child in self._temp_dir.iterdir():
-                shutil.rmtree(child) if child.is_dir() else child.unlink()
 
     def build_args(self) -> list[str]:
         video = self._config.video
@@ -185,6 +148,7 @@ class Av1anRunner:
             # (ahead of the upscale filter, which needs the cropped frame) - see preprocess.py.
             # Passing this flag too would crop twice.
             args += ["-f", f"-vf crop={video.crop}"]
+        self._invalidate_resume_state_if_source_relocated()
         # done.json only exists once a real prior run has made progress - a better resumability
         # signal than bare directory existence, which __init__ now creates unconditionally (needed
         # early for preprocess.vpy generation, see __init__), so it would otherwise always be true.
@@ -192,6 +156,49 @@ class Av1anRunner:
             self._clean_orphaned_chunk_outputs()
             args += ["-r"]  # resume from an existing --temp dir rather than starting over
         return args
+
+    def _invalidate_resume_state_if_source_relocated(self) -> None:
+        """av1an's `chunks.json` freezes each chunk's own copy of the *original* run's script path
+        (and full script_text) at scene-split time - confirmed directly by reading a real one - and
+        `-r` reuses those per-chunk records verbatim, ignoring the fresh `-i` this run passes on the
+        command line entirely. If the source/output ever moved (a drive renamed/consolidated, the
+        whole project folder - source, --temp, done.json and all - copied to the new location
+        together), every chunk's frozen record still points at a script path that no longer exists.
+
+        Confirmed live on Ghost in the Shell: SAC_2045 (D:\\arc1 moved to H:\\, twice): first,
+        every chunk failed with "x265: unable to open input file <->" (a *different*, now-fixed
+        bug - see _clean_orphaned_chunk_outputs). Once that was fixed, the *real* failure surfaced
+        on the next retry: "Script evaluation failed: File reading exception: [Errno 2] No such
+        file or directory: 'D:\\arc1\\...\\....video.tmp.index.vpy'" - av1an trying to open a file
+        on a drive letter that no longer had anything at that path, despite solare passing the
+        correct new H:-based `-i`. A first attempt at fixing this compared the *.vpy file's* own
+        content before/after regenerating it - reasonable in principle, but proven insufficient:
+        it only catches a relocation at the exact moment it happens. By the time chunks.json is
+        *already* corrupted from a *past* relocation (as here - the corruption happened on an
+        earlier run, before this exact check existed), the .vpy snapshot comparison sees no change
+        between "old" and "new" (both already say H:) and never fires, while chunks.json itself is
+        still silently poisoned.
+
+        The direct, unconditionally correct check instead: chunks.json (if present) must actually
+        reference the input path this run is about to use - if it doesn't, by construction every
+        chunk's frozen record points somewhere stale, regardless of *when* that happened. Wipe
+        --temp's contents (not the directory itself, av1an recreates that) so the done.json check
+        right after this finds nothing and starts genuinely fresh instead of resuming against
+        state that can never work."""
+        chunks_path = self._temp_dir / "chunks.json"
+        if not chunks_path.exists():
+            return
+        try:
+            chunks = json.loads(chunks_path.read_text())
+            recorded_path = chunks[0]["input"]["VapourSynth"]["path"]
+        except (json.JSONDecodeError, LookupError, TypeError):
+            # An unreadable/unexpected shape is itself a reason not to trust this as a resumable
+            # state - fail safe by treating it the same as a confirmed mismatch, below.
+            recorded_path = None
+        if recorded_path == str(self._input_path):
+            return
+        for child in self._temp_dir.iterdir():
+            shutil.rmtree(child) if child.is_dir() else child.unlink()
 
     def _clean_orphaned_chunk_outputs(self) -> None:
         """A chunk actively encoding at the moment of an unclean stop (Windows TerminateProcess,
