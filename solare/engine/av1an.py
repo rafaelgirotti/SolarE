@@ -29,6 +29,7 @@ then encoding runs the exact same upscale again per chunk for real.
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -97,7 +98,7 @@ class Av1anRunner:
             # so it's already established as solare-owned, av1an-observed-but-not-managed space.
             self._video_out.parent.mkdir(parents=True, exist_ok=True)
             vpy_path = self._video_out.parent / f"{self._video_out.stem}.preprocess.vpy"
-            generate_vpy(config, self._src_file, vpy_path, self._chunk_method)
+            self._regenerate_vpy_and_invalidate_stale_resume(config, vpy_path)
             self._input_path = vpy_path
             if config.video.upscale is not None:
                 # A cheaper stand-in for av1an's own scene-detection pass specifically - see
@@ -116,8 +117,45 @@ class Av1anRunner:
             # real preprocessing script, without pretending this title needs one.
             self._video_out.parent.mkdir(parents=True, exist_ok=True)
             vpy_path = self._video_out.parent / f"{self._video_out.stem}.index.vpy"
-            generate_vpy(config, self._src_file, vpy_path, self._chunk_method)
+            self._regenerate_vpy_and_invalidate_stale_resume(config, vpy_path)
             self._input_path = vpy_path
+
+    def _regenerate_vpy_and_invalidate_stale_resume(self, config: TitleConfig, vpy_path: Path) -> None:
+        """build_args() resumes (`-r`) purely on `done.json` existing in --temp - fine for the
+        common case (a killed/interrupted run on the same paths), but a real, reproducible failure
+        otherwise: if the source or output moved (e.g. a drive got renamed/consolidated and the
+        whole project folder - source, in-progress --temp, done.json and all - was copied to the
+        new location together), the .vpy this run is about to generate embeds the *new* absolute
+        source/cachefile path, while --temp's done.json/chunks.json/split state was built against
+        the *old* one on a previous run. Confirmed live on Ghost in the Shell: SAC_2045 (D:\\arc1
+        moved to H:\\): av1an still resumed, still logged the correct new H:-based script content,
+        but every chunk failed with "x265: unable to open input file <->" and the worker gave up
+        after 3 retries per chunk - the resumed split/chunk state no longer matches a real, valid
+        source. (Also observed but not the actual cause: the resumed run's logged script_text was
+        padded with trailing null bytes out to the *old*, longer path's length - some av1an-side
+        resume-caching quirk, not something this fix relies on to detect the real problem, since
+        solare's own `write_text()` always fully truncates on write and can't produce that itself.)
+
+        Fix: before overwriting vpy_path with this run's content, read what was there from the
+        *previous* run (if any) and compare the embedded loader line - specifically the source/
+        cachefile path, not the whole file, so unrelated content (encoder param changes, e.g.)
+        never triggers this. A changed path means --temp's resume state was built for a source
+        that's no longer there; wipe --temp's contents (not the directory itself, av1an recreates
+        that) so build_args() finds no done.json and starts genuinely fresh instead of attempting
+        an unreliable resume against invalidated state."""
+        old_loader_line = None
+        if vpy_path.exists():
+            for line in vpy_path.read_text().splitlines():
+                if line.startswith("clip = "):
+                    old_loader_line = line
+                    break
+        generate_vpy(config, self._src_file, vpy_path, self._chunk_method)
+        new_loader_line = next(
+            (line for line in vpy_path.read_text().splitlines() if line.startswith("clip = ")), None
+        )
+        if old_loader_line is not None and old_loader_line != new_loader_line and self._temp_dir.exists():
+            for child in self._temp_dir.iterdir():
+                shutil.rmtree(child) if child.is_dir() else child.unlink()
 
     def build_args(self) -> list[str]:
         video = self._config.video
@@ -151,8 +189,34 @@ class Av1anRunner:
         # signal than bare directory existence, which __init__ now creates unconditionally (needed
         # early for preprocess.vpy generation, see __init__), so it would otherwise always be true.
         if (self._temp_dir / "done.json").exists():
+            self._clean_orphaned_chunk_outputs()
             args += ["-r"]  # resume from an existing --temp dir rather than starting over
         return args
+
+    def _clean_orphaned_chunk_outputs(self) -> None:
+        """A chunk actively encoding at the moment of an unclean stop (Windows TerminateProcess,
+        no chance for the encoder to finish or clean up - see terminate()'s own docstring) leaves
+        a real, partial `encode/<chunk>.hevc` behind: done.json correctly never recorded it as
+        finished, so a resume correctly re-queues it - but the stale partial file is still sitting
+        at the exact path the redo is about to write to. Confirmed live on Ghost in the Shell:
+        SAC_2045 (two chunks in flight when a run was stopped mid-encode): every resume attempt
+        on those two chunks failed immediately with `x265: unable to open input file <->` and
+        gave up after 3 retries, even though 146 other genuinely-finished chunks resumed and
+        played back fine - only fixed by manually deleting the two stale partial files first.
+        Whatever the exact mechanism (a leftover file at the encoder's expected output path
+        interfering with a fresh open, most likely), the fix is unconditionally safe either way:
+        any file in encode/ not listed in done.json's "done" map cannot be a real finished chunk
+        by definition, so removing it before every resume costs nothing and never touches real
+        progress. Not scoped to `.hevc` - other encoders in this project (SVT-AV1) write `.ivf`
+        chunks instead, same failure class either way."""
+        done_path = self._temp_dir / "done.json"
+        encode_dir = self._temp_dir / "encode"
+        if not encode_dir.is_dir():
+            return
+        done_chunks = set(json.loads(done_path.read_text()).get("done", {}))
+        for chunk_file in encode_dir.iterdir():
+            if chunk_file.is_file() and chunk_file.stem not in done_chunks:
+                chunk_file.unlink()
 
     def start(self) -> None:
         # av1an's own log defaults to ./logs/av1an.log.<date>, relative to wherever the process
