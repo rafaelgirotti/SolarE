@@ -82,9 +82,18 @@ def _cache_kwarg(chunk_method: str, cache_dir: Path, src_file: Path) -> str:
     output-side directory as everything else this run generates. Each plugin has a differently
     named/shaped parameter for this - confirmed directly against each plugin's own real
     .signature(), not guessed - though only lsmash's has been verified end to end against a real
-    index build; bestsource/ffms2 are implemented from their documented signatures."""
+    index build; bestsource/ffms2 are implemented from their documented signatures.
+
+    lsmash's `cachedir` (a bare directory) makes the plugin invent its own cache filename by
+    flattening the *entire source path* into one string (every `\\`/`:` replaced with `_`) - no
+    length guard. Confirmed live on Ghost in the Shell: SAC_2045 (a long bracketed release-folder
+    name under an already-long output path): the flattened name landed at 312 characters, past
+    Windows' 260-char MAX_PATH, and lsmash failed with "unable to create index file" - av1an
+    exits with no useful log at all, just a raw VapourSynth traceback on stderr. `cachefile` (an
+    exact path, not just a directory) sidesteps the auto-flattening entirely - same fix already
+    used for ffms2 below. Verified: same source now produces a 191-character cache path."""
     if chunk_method == "lsmash":
-        return f', cachedir=r"{cache_dir}"'
+        return f', cachefile=r"{cache_dir / (src_file.stem + ".lwi")}"'
     if chunk_method == "bestsource":
         return f', cachepath=r"{cache_dir}"'
     if chunk_method == "ffms2":
