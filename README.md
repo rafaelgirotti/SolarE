@@ -39,7 +39,15 @@ manual toggle uses. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for desig
   the right Python version for you, so a separate Python install isn't strictly required.
 - External encoder tools, resolvable on `PATH`:
   - [`av1an`](https://github.com/rust-av/Av1an) - `cargo install av1an`, or a prebuilt binary from
-    its releases if you don't have a Rust toolchain.
+    its releases if you don't have a Rust toolchain. **Linux**: no prebuilt Linux binary exists in
+    practice (checked - every recent release ships source only), so `cargo install av1an` is the
+    real path, and it needs three things `cargo install` alone won't tell you up front: a `nasm`
+    package (one of av1an's own dependencies needs it to assemble, fails with a clear "Unable to
+    run nasm" otherwise), `--locked` on the install command itself (without it, `cargo install`
+    re-resolves to a `vergen`/`vergen-lib` version combination that doesn't actually compile -
+    unrelated to anything solare-specific, just how that dependency's version ranges happen to
+    interact), and `vapoursynth-devel` (av1an links against VapourSynth's C libraries at build
+    time unconditionally, even for a title that never touches a `.vpy` script).
   - `ffmpeg`/`ffprobe` - [official builds](https://ffmpeg.org/download.html).
   - A standalone `x265` CLI build - [MulticoreWare's builds](https://www.videolan.org/developers/x265.html)
     or build from source.
