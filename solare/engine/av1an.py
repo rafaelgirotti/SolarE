@@ -29,8 +29,10 @@ then encoding runs the exact same upscale again per chunk for real.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -45,6 +47,28 @@ from solare.engine.preprocess import (
     needs_preprocessing,
     supports_index_cache,
 )
+
+
+def _subprocess_env() -> dict[str, str]:
+    """A clean environment for av1an (and everything it spawns in turn) - subprocess.Popen
+    inherits the full parent environment by default, which on Linux includes solare's own `uv`
+    venv's `bin/` directory prepended onto PATH. Confirmed live: that alone (regardless of
+    VIRTUAL_ENV even being set) makes VapourSynth's embedded-Python VSScript API fail to
+    initialize ("Failed to get VSScript API") the moment av1an tries to use any VapourSynth
+    chunk method (lsmash/ffms2/bestsource) - the venv's own `python3` shadows the system one on
+    PATH, and vsscript's Python discovery walks PATH to find it, landing on an interpreter that
+    has no idea where VapourSynth's compiled module or standard library actually live. Stripping
+    solare's own venv bin dir (found via sys.exec_prefix, not just the VIRTUAL_ENV env var, since
+    the failure reproduces even without it set) - plus VIRTUAL_ENV/PYTHONHOME/PYTHONPATH, the same
+    class of leak - fixes it without touching anything prepend_local_tools_to_path() already added
+    ahead of it on PATH."""
+    env = os.environ.copy()
+    venv_bin = str(Path(sys.exec_prefix) / "bin")
+    path_entries = env.get("PATH", "").split(os.pathsep)
+    env["PATH"] = os.pathsep.join(p for p in path_entries if p != venv_bin)
+    for key in ("VIRTUAL_ENV", "PYTHONHOME", "PYTHONPATH"):
+        env.pop(key, None)
+    return env
 
 
 @dataclass
@@ -244,6 +268,7 @@ class Av1anRunner:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             cwd=str(self._video_out.parent),
+            env=_subprocess_env(),
             creationflags=solare_platform.subprocess_creation_flags(),
         )
 
