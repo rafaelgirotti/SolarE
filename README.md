@@ -103,9 +103,59 @@ manual toggle uses. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for desig
     OS-level-registration reason as VapourSynth itself above - not something `tools/` PATH-prepend
     can do), a matching-version TensorRT runtime, and a TensorRT engine pre-built for the exact
     title's post-crop resolution. See [`../tools/vsmlrt.md`](../tools/vsmlrt.md) and
-    [`../tools/cuda-tensorrt.md`](../tools/cuda-tensorrt.md) for the full setup and the real
-    gotchas found doing it the first time - genuinely more involved than the other tools here, not
-    a quick `vsrepo install`. Not needed unless a title actually uses `upscale`.
+    [`../tools/cuda-tensorrt.md`](../tools/cuda-tensorrt.md) for the full Windows setup and the
+    real gotchas found doing it the first time - genuinely more involved than the other tools
+    here, not a quick `vsrepo install`. Not needed unless a title actually uses `upscale`.
+    - **Linux**: no prebuilt binary exists for `vstrt` on any platform but Windows - confirmed
+      against every upstream vs-mlrt release asset - so it has to be built from source, and three
+      more gaps show up doing that, none of them documented upstream:
+      1. **TensorRT's own `pip install tensorrt` ships the runtime `.so` files but no C++
+         headers and no `trtexec` binary** - fine for Python-side inference, not enough to
+         compile `vstrt` or build an engine the traditional way. Get the matching-version headers
+         from NVIDIA's own open-source [`NVIDIA/TensorRT`](https://github.com/NVIDIA/TensorRT)
+         repo instead (checkout the tag matching the pip version, e.g. `v11.3` for
+         `tensorrt==11.3.0.99`) - `include/` alone is enough, no account/login gate, same
+         no-SDK-download principle as the pip route itself.
+      2. **The built `libvstrt.so` can't find `libnvinfer.so.11` at runtime** - pip installs it
+         into a user site-packages directory, nowhere the dynamic linker searches by default.
+         Fix: copy the actual `.so` file (not a symlink into site-packages - it needs to survive
+         a `pip uninstall`) into VapourSynth's plugin autoload directory alongside `vstrt.so`
+         itself, and register that same directory as a real library path (a one-line
+         `/etc/ld.so.conf.d/*.conf` file + `ldconfig`) - it's already serving double duty as a
+         plugin dir, this just makes it a library dir too.
+      3. **`trt.BuilderFlag.FP16` no longer exists as of TensorRT 11.3** (present in the version
+         `vsmlrt.md`'s Windows research was done against) - precision handling changed in
+         TensorRT 10+ and the flag was removed outright, not renamed to anything obvious. Building
+         an engine via TensorRT's Python API (`trt.Builder`/`trt.OnnxParser`, since there's no
+         `trtexec` binary either - see gap 1) without it still produces a working fp32 engine;
+         getting real fp16 throughput back needs whatever TensorRT 11's actual replacement
+         mechanism is - not yet chased down, worth revisiting before trusting throughput numbers
+         from the old Windows benchmarks.
+
+      Build (Fedora, RTX 50-series example - adjust the CUDA/TensorRT package versions to match
+      your own driver):
+      ```
+      sudo dnf install cuda-cudart-13-4 cuda-cudart-devel-13-4 cuda-driver-devel-13-4 cuda-nvcc-13-4
+      python3.14 -m pip install --user tensorrt   # runtime .so files + Python API
+      git clone --branch v11.3 --depth 1 https://github.com/NVIDIA/TensorRT.git trt-oss  # headers only
+
+      git clone --depth 1 --branch v15.16 https://github.com/AmusementClub/vs-mlrt.git
+      cd vs-mlrt/vstrt
+      cmake -B build -S . \
+        -DVAPOURSYNTH_INCLUDE_DIRECTORY=/usr/include/vapoursynth \
+        -DTENSORRT_HOME=<a dir with include/ symlinked to trt-oss/include, lib/ symlinked to
+                          the unversioned .so names pointing at ~/.local/.../tensorrt_libs/*.so.11>
+      cmake --build build -j$(nproc)
+      ```
+      Then build the engine itself with a short Python script calling the `tensorrt` API directly
+      (`Builder` → `OnnxParser.parse(onnx_bytes)` → `create_optimization_profile()` with
+      `min=opt=max=(1,3,height,width)` matching the config's exact post-crop resolution, matching
+      the shape-must-be-exact gotcha `vsmlrt.md` already documents → `build_serialized_network()`),
+      saved to the exact path `engine_path()` in `solare/engine/preprocess.py` expects
+      (`<shared tools>/vsmlrt/vstrt/<model>_<width>x<height>.engine`) - solare's own error message
+      when an engine is missing already prints the equivalent `trtexec` invocation as a reference.
+      Confirmed working end to end: a real 1080p→4K encode through solare's own dashboard, not
+      just an engine-load self-check.
 
   **Convenience**: drop any of the above (except VapourSynth) into `<name>/` under a shared
   `tools/` directory one level up from this project (i.e. a sibling of every project that wants
