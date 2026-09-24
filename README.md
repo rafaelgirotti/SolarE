@@ -47,11 +47,52 @@ manual toggle uses. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for desig
   - `mkvmerge` (from [MKVToolNix](https://mkvtoolnix.download/)).
   - [`dovi_tool`](https://github.com/quietvoid/dovi_tool), only if you need Dolby Vision passthrough.
   - [VapourSynth](https://www.vapoursynth.com/) plus its chunking plugins (L-SMASH/FFMS2/BestSource)
-    - install via the official installer; a relocated/portable copy won't initialize, since its
-    loader depends on OS-level registration, not just being on `PATH`. Follow
+    - a relocated/portable copy won't initialize, since its loader depends on OS-level
+    registration, not just being on `PATH`. Follow
     [av1an's own installation instructions](https://github.com/rust-av/Av1an#installation) for the
-    plugin setup (on Windows: `python3 vsrepo.py install lsmas ffms2 bs vszip julek` from
-    VapourSynth's install directory) - this project doesn't duplicate that guide.
+    general approach - this project doesn't duplicate that guide - but read the two Linux notes
+    below before running `vsrepo`, since the official guide's `vsrepo` instructions alone produce
+    a broken install there.
+    - **Windows**: install via the official installer, then `python3 vsrepo.py install lsmas ffms2
+      bs vszip julek` from VapourSynth's install directory.
+    - **Linux**: install VapourSynth itself from your distro (Fedora/RPM Fusion:
+      `vapoursynth-libs vapoursynth-devel vapoursynth-tools python3-vapoursynth`; confirmed working
+      this way, no registry-equivalent step needed - Linux's dynamic linker finds it through the
+      normal system search path). **Don't `pip install vsrepo`** for the chunking plugins despite
+      what av1an's own guide suggests - confirmed live: it pulls in its own bundled VapourSynth
+      core (a different version from your distro's) as a dependency, which silently shadows the
+      system one for every process on the machine, not just `vsrepo` itself - broke `vspipe` and
+      `av1an`'s own VapourSynth detection outright (`Failed to get VSScript API`) until traced back
+      and removed. If you've already hit that: `pip uninstall vapoursynth vsrepo vsstubs` fixes it.
+      Instead, either build each plugin from source against your distro's VapourSynth
+      (`vapoursynth-devel`), or use `pip install --user vsrepo` **only** to fetch the plugin
+      binaries it has as prebuilt Linux downloads (`ffms2`, `bestsource` - confirmed available;
+      `lsmas`/`vszip` are not, as of this writing), then immediately `pip uninstall` it again and
+      manually copy the downloaded `.so` file(s) from
+      `~/.local/lib/python3.*/site-packages/vapoursynth/plugins/vsrepo/` into your distro
+      VapourSynth's own plugin autoload directory (Fedora: `/usr/lib64/vapoursynth/`, confirmed via
+      `ldconfig -p`/`ldd` on the system `vspipe` binary - don't assume the path, check it) - that's
+      the directory av1an (linked against the *system* VapourSynth) actually scans, not wherever
+      the pip package's own bundled copy would put things.
+    - **Linux, building `lsmash` from source** (no prebuilt Linux binary exists anywhere, confirmed
+      - `vsrepo`'s own index only lists Windows binaries for it): clone
+      [`HomeOfAviSynthPlusEvolution/L-SMASH-Works`](https://github.com/HomeOfAviSynthPlusEvolution/L-SMASH-Works)
+      with `--recurse-submodules`, then:
+      ```
+      cmake -B build -S . -DBUILD_AVS_PLUGIN=OFF -DBUILD_AU2_PLUGIN=OFF -DENABLE_MFX=OFF \
+        -Ddav1d_USE_STATIC_LIBS=OFF -DVPX_USE_STATIC_LIBS=OFF -DZLIB_USE_STATIC_LIBS=OFF \
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_BUILD_TYPE=Release
+      cmake --build build -j$(nproc)
+      ```
+      (Fedora build deps: `cmake ffmpeg-devel zlib-devel libdav1d-devel libvpx-devel
+      libxml2-devel`.) `-DCMAKE_POSITION_INDEPENDENT_CODE=ON` is required, not optional - without
+      it the final link fails (`R_X86_64_32S relocation ... recompile with -fPIC`), since the
+      bundled `xxHash`/`l-smash`/`obuparse` static libs it links against aren't built with PIC by
+      default and this is the one flag that fixes all of them at once. Copy the resulting
+      `build/libLSMASHSource.so` into the same plugin autoload directory as above. Confirmed
+      working end to end afterward: a real `av1an` chunked encode via `-m lsmash` through solare's
+      own dashboard, not just av1an's own `--version` plugin self-check (which only proves the
+      plugin *loads*, not that it actually indexes/decodes a real file correctly).
   - For deinterlacing (`video.deinterlace` in a title config): QTGMC's own dependency chain,
     installed into that same VapourSynth: `vsrepo install havsfunc mvsfunc mv rgvs nnedi3
     nnedi3_resample nnedi3_weights fmtc znedi3`, plus `pip install vsutil` (havsfunc's one
