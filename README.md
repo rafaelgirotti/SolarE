@@ -80,6 +80,21 @@ manual toggle uses. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for desig
   `growattServer` package itself is always installed, it just goes unused without credentials.
 - Optional, only for NVIDIA GPU stats in the hardware monitor: an NVIDIA GPU with drivers
   installed. CPU/RAM monitoring works without it.
+- Optional, only for real CPU *power* readings in the hardware monitor on Linux: a udev rule
+  making the RAPL package zone's `energy_uj` readable without root - a stock kernel (confirmed on
+  Fedora) ships it root-only by default (RAPL side-channel hardening, CVE-2020-8694-adjacent).
+  Without it the panel just shows CPU power as `n/a`; CPU temperature, GPU stats, and everything
+  else in the hardware monitor work regardless. To enable it:
+  ```
+  # /etc/udev/rules.d/99-rapl-permissions.rules
+  SUBSYSTEM=="powercap", KERNEL=="intel-rapl:*", RUN+="/usr/bin/chmod -R a+r /sys%p"
+  ```
+  then `sudo udevadm control --reload-rules && sudo udevadm trigger --action=add
+  --subsystem-match=powercap && sudo udevadm settle` to apply immediately (or just reboot - it
+  reapplies automatically on every boot from here on). Not part of this repo or its `tools/`
+  convention since it's a system-level permission change, not a file solare ships or reads from a
+  project directory - if you ever rebuild your initramfs or move to a different machine, this
+  rule needs to be recreated there too.
 - Optional, only if a title's config uses `source: "opensubtitles"` for a subtitle track: an
   OpenSubtitles.com account (API key + login) - see `config/config.example.json`'s
   `openSubtitles` block.
