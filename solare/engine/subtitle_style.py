@@ -4,8 +4,8 @@ the on-screen-text-sign styling/positioning a fansub's own English ASS track alr
 same source. Not currently wired into the main pipeline (engine/opensubtitles.py) - built and
 proven against real episodes of Monster (2004), but left as a standalone, explicitly-invoked step
 pending a decision on whether to make it the default treatment for every opensubtitles-sourced
-subtitle or only apply it selectively. See history/pitfalls.md for the two real bugs found
-building this and history/titles/monster-2004.md for the full investigation.
+subtitle or only apply it selectively. See local/pitfalls.md for the two real bugs found
+building this and local/titles/monster-2004.md for the full investigation.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ def _standard_styles(styles: dict) -> set[str]:
     on-screen-text overlay), two ways: matching each style's own (Fontname, Fontsize) against the
     "Default" style's, OR the style's own name starting with "Default" - confirmed live as both
     necessary, not just more robust in theory, across three separate real cases: episode 2's
-    "Default - Italic an8" (same Gandhi Sans 75 as "Default - Italic", just top-aligned - a font+
+    "Default - Italic an8" (same font/size as "Default - Italic", just top-aligned - a font+
     size match); episode 31's event-level "default" (lowercase, a case-typo of the real "Default" -
     handled by `_canonical_style`, not here); and episode 46's "Default - C" (real spoken dialogue,
     "Who are you!?" / "Monster...", deliberately switched to Arial from the episode's own Jesaya
@@ -374,7 +374,7 @@ def generate_styled_subtitle(reference_ass_path: Path, plain_text_path: Path, ou
 
     Two more real, separate on-screen-text bugs fixed here, found by actually burning the output
     onto real frames rather than trusting timestamps/coordinates alone (see
-    history/pitfalls.md): a reference sign built from multiple stacked events at the identical
+    local/pitfalls.md): a reference sign built from multiple stacked events at the identical
     style+start+end (a shadow-colour layer under a near-white foreground layer, this source's own
     technique for a legible caption against a busy background) needs every layer reproduced, not
     just whichever one the timing match happened to land on - see _layer_group. And a reference
