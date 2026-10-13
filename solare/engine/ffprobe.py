@@ -69,6 +69,22 @@ def get_sample_rate(file: Path, stream_selector: str) -> int:
     return int(result.stdout.strip())
 
 
+def get_codec_name(file: Path, stream_selector: str) -> str:
+    """`stream_selector` is an ffprobe stream-selector string, e.g. "s:0". Returns "" if no
+    stream matches."""
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-select_streams", stream_selector,
+            "-show_entries", "stream=codec_name",
+            "-of", "csv=p=0", "--", str(file),
+        ],
+        capture_output=True, text=True, check=True,
+    )
+    lines = result.stdout.strip().splitlines()
+    return lines[0].strip() if lines else ""
+
+
 def get_duration(file: Path) -> float:
     result = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", "--", str(file)],

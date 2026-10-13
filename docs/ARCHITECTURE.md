@@ -30,6 +30,13 @@ expressed as a generated VapourSynth script that `av1an` reads directly as its o
 straight off the filtered output. No intermediate file is written and no separate full-file
 transcode pass runs first.
 
+## Supported containers and audio formats
+Matroska (`.mkv`) is the default container, paired with Opus audio by default for efficient
+multichannel storage and subtitle attachment support. MP4 (`.mp4`) is also supported for web and
+mobile playback targets, using AAC audio by default (or stream copy), applying `+faststart` moov
+atom placement, and rejecting container-incompatible features (such as font attachments, Dolby
+Vision RPU injection, or image-based subtitles) early at validation time before encoding begins.
+
 ## Repo structure
 - `docs/` - committed, kept strictly to this tool's own architecture (this file). No personal
   file paths, no encoding-domain specifics, no development history.

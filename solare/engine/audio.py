@@ -1,4 +1,5 @@
-"""Audio track transcoding - one pass per config.audio.tracks entry, always to Opus.
+"""Audio track transcoding - one pass per config.audio.tracks entry, to the track's configured
+encoder (Opus by default for Matroska output, AAC for MP4 - see TitleConfig.audio_encoder).
 
 `mapping_family` and `channel_fix` are independent controls, both aimed at multichannel sources:
 a track already in a channel layout ffmpeg understands natively only needs `mapping_family` (a
@@ -25,25 +26,33 @@ def transcode_audio_track(
     source_language: str,
     out_file: Path,
     speed_correction: SpeedCorrection | None = None,
+    encoder: str = "libopus",
 ) -> None:
+    """`encoder` is already validated against the output container by config.load_config (see
+    TitleConfig.audio_encoder) - "copy" passes the source stream through with no filtering."""
     src_index = find_stream_index(src_file, "a", source_language, codec=track.codec)
     if src_index < 0:
         raise ValueError(f"No audio stream matching language={source_language!r} in {src_file}")
 
     args = ["ffmpeg", "-y", "-i", str(src_file), "-map", f"0:a:{src_index}"]
-    filters = []
-    if speed_correction is not None:
-        filters.append(_speed_correction_filter(src_file, f"a:{src_index}", speed_correction))
-    if track.kind == "downmix" and track.downmix_filter:
-        filters.append(track.downmix_filter)
-    elif track.channel_fix:
-        filters.append(track.channel_fix)
-    if filters:
-        args += ["-af", ",".join(filters)]
-    if track.mapping_family:
-        args += ["-mapping_family", track.mapping_family]
+    if encoder == "copy":
+        args += ["-c:a", "copy"]
+    else:
+        filters = []
+        if speed_correction is not None:
+            filters.append(_speed_correction_filter(src_file, f"a:{src_index}", speed_correction))
+        if track.kind == "downmix" and track.downmix_filter:
+            filters.append(track.downmix_filter)
+        elif track.channel_fix:
+            filters.append(track.channel_fix)
+        if filters:
+            args += ["-af", ",".join(filters)]
+        # mapping_family is a libopus-private option - meaningless (and warned about) for any
+        # other encoder, so it's only forwarded when Opus is actually the target.
+        if track.mapping_family and encoder == "libopus":
+            args += ["-mapping_family", track.mapping_family]
+        args += ["-c:a", encoder, "-b:a", track.bitrate]
     args += [
-        "-c:a", "libopus", "-b:a", track.bitrate,
         "-metadata:s:a:0", f"title={track.title}",
         "-metadata:s:a:0", f"language={track.language}",
     ]

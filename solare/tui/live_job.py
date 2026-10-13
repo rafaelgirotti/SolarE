@@ -277,7 +277,9 @@ class LiveJobSource:
             current_item_src_path=current_item_src_path,
             output_path=str(disk_check_path),
             disk_free_gb=round(disk_usage.free / (1024**3), 1),
-            output_used_gb=_sum_output_size_gb(output_root, state.current_temp_dir),
+            output_used_gb=_sum_output_size_gb(
+                output_root, state.current_temp_dir, self._config.output_container
+            ),
             started_at=state.started_at,
             active_chunks=active_chunks,
             waiting_for_solar=state.waiting_for_solar,
@@ -299,15 +301,18 @@ def _safe_size(f: Path) -> int:
         return 0
 
 
-def _sum_output_size_gb(output_root: Path, current_temp_dir: str = "") -> float:
-    """Finished .mkv files under output_root, plus - if an item is currently encoding - the
+def _sum_output_size_gb(
+    output_root: Path, current_temp_dir: str = "", container: str = "mkv"
+) -> float:
+    """Finished output files (of the title's configured container) under output_root, plus - if
+    an item is currently encoding - the
     already-encoded chunks sitting in its av1an --temp dir (av1an-temp/encode/*). Without the
     latter, a fresh single-item run reads "0.0GB used" for however long the whole encode takes:
     the real output file only appears once av1an's own mkvmerge concat pass finishes at the very
     end, even though real, sizeable chunk data has been accumulating on disk the entire time."""
     total = 0
     if output_root.exists():
-        total += sum(_safe_size(f) for f in output_root.rglob("*.mkv") if f.is_file())
+        total += sum(_safe_size(f) for f in output_root.rglob(f"*.{container}") if f.is_file())
     if current_temp_dir:
         encode_dir = Path(current_temp_dir) / "encode"
         if encode_dir.is_dir():

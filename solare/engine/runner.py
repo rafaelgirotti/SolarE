@@ -32,7 +32,7 @@ from solare.engine.chunk_progress import ChunkProgress
 from solare.engine.config import TitleConfig
 from solare.engine.dolby_vision import inject_rpu
 from solare.engine.integrity import check_output_integrity
-from solare.engine.mux import mux_episode, resolve_subtitle_sources
+from solare.engine.mux import check_container_compatibility, mux_episode, resolve_subtitle_sources
 from solare.engine.opensubtitles import fetch_subtitle_for_item
 from solare.engine.queue import QueueItem, build_queue, clean_title
 from solare.engine import ffprobe, timing
@@ -335,6 +335,9 @@ class JobRunner:
 
         with self._lock:
             self._state.phase = RunPhase.VIDEO_ENCODE
+        # Seconds of ffprobe now, rather than discovering after a full encode that the output
+        # container can't hold one of the configured subtitle tracks.
+        check_container_compatibility(self._config, item.src_file)
         # Constructing Av1anRunner is cheap prep work (creates temp_dir, generates the
         # preprocessing script if configured) - safe to do regardless of solar state. Actually
         # starting it is what launches real CPU work (VapourSynth indexing, scene detection, then
@@ -407,6 +410,7 @@ class JobRunner:
                 track.source_language or self._config.audio_source_language,
                 audio_out,
                 speed_correction=self._config.video.speed_correction,
+                encoder=self._config.audio_encoder(track),
             )
             audio_files.append(audio_out)
         with self._lock:

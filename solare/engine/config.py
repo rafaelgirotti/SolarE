@@ -11,6 +11,22 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# Output containers the mux step knows how to build. Values are used verbatim as the output file
+# extension, so this is a closed set rather than free text.
+OUTPUT_CONTAINERS = ("mkv", "mp4")
+
+# Source file extensions build_queue() may pick up (compared case-insensitively against each
+# file's suffix - never interpolated into a glob pattern, so a config value can't widen the scan
+# beyond the source folder itself).
+SOURCE_EXTENSIONS = (".mkv", ".mp4", ".m4v", ".mov", ".webm", ".ts", ".m2ts")
+DEFAULT_SOURCE_EXTENSIONS = SOURCE_EXTENSIONS
+
+# Audio encoders a track may request. "copy" passes the source stream through untouched (no
+# filters, no bitrate). Each container only accepts a subset - see _MP4_AUDIO_ENCODERS.
+AUDIO_ENCODERS = ("libopus", "aac", "libfdk_aac", "ac3", "eac3", "flac", "alac", "libmp3lame", "copy")
+_MP4_AUDIO_ENCODERS = ("aac", "libfdk_aac", "ac3", "eac3", "flac", "alac", "libmp3lame", "copy")
+DEFAULT_AUDIO_ENCODER = {"mkv": "libopus", "mp4": "aac"}
+
 
 @dataclass
 class DeinterlaceSettings:
@@ -145,6 +161,8 @@ class AudioTrack:
     # track in the same language - without this, find_stream_index just returns the first
     # language match in stream order, which only happens to pick the lossless track over a lossy
     # duplicate/fallback of the same language if the source happens to order them that way.
+    encoder: str | None = None  # target audio encoder (e.g. "aac", "libopus", "copy"); defaults
+    # to "aac" for MP4 output and "libopus" for MKV output.
 
 
 @dataclass
@@ -202,6 +220,13 @@ class TitleConfig:
     font_attach_dir: str | None = None
     solar_gate: SolarGate | None = None
     open_subtitles: OpenSubtitlesCredentials | None = None
+    source_extensions: tuple[str, ...] = DEFAULT_SOURCE_EXTENSIONS
+    output_container: str = "mkv"  # one of OUTPUT_CONTAINERS; also the output file extension
+
+    def audio_encoder(self, track: AudioTrack) -> str:
+        """The encoder actually used for `track` - its own explicit setting, else the container's
+        default (Opus for Matroska, AAC for MP4, the most broadly playable choice there)."""
+        return track.encoder or DEFAULT_AUDIO_ENCODER[self.output_container]
 
     @property
     def settings_summary(self) -> str:
@@ -229,6 +254,7 @@ def _parse_audio_track(entry: dict) -> AudioTrack:
         source_language=entry.get("sourceLanguage"),
         language_ietf=entry.get("languageIetf"),
         codec=entry.get("codec"),
+        encoder=entry.get("encoder"),
     )
 
 
@@ -317,7 +343,7 @@ def load_config(path: str | Path) -> TitleConfig:
 
     audio = data["audio"]
 
-    return TitleConfig(
+    config = TitleConfig(
         path=path,
         title=data["title"],
         source_root=source["root"],
@@ -333,4 +359,61 @@ def load_config(path: str | Path) -> TitleConfig:
         font_attach_dir=data.get("fontAttachDir"),
         solar_gate=_parse_solar_gate(data.get("solarGate")),
         open_subtitles=_parse_open_subtitles(data.get("openSubtitles")),
+        source_extensions=_parse_source_extensions(source.get("extensions")),
+        output_container=data["output"].get("container", "mkv"),
     )
+    _validate_container(config)
+    return config
+
+
+def _parse_source_extensions(entry: list[str] | None) -> tuple[str, ...]:
+    if entry is None:
+        return DEFAULT_SOURCE_EXTENSIONS
+    if not isinstance(entry, list) or not entry:
+        raise ValueError("source.extensions must be a non-empty list, e.g. [\".mkv\", \".mp4\"]")
+    normalized = []
+    for ext in entry:
+        ext = str(ext).lower()
+        if not ext.startswith("."):
+            ext = "." + ext
+        if ext not in SOURCE_EXTENSIONS:
+            raise ValueError(
+                f"source.extensions: unsupported extension {ext!r} - expected one of "
+                f"{', '.join(SOURCE_EXTENSIONS)}"
+            )
+        normalized.append(ext)
+    return tuple(dict.fromkeys(normalized))
+
+
+def _validate_container(config: TitleConfig) -> None:
+    """Fails at load time - before any encode starts - for settings the chosen container can't
+    hold, rather than letting a multi-hour encode finish only for the final mux to reject it."""
+    container = config.output_container
+    if container not in OUTPUT_CONTAINERS:
+        raise ValueError(
+            f"output.container: unsupported value {container!r} - expected one of "
+            f"{', '.join(OUTPUT_CONTAINERS)}"
+        )
+    allowed_encoders = _MP4_AUDIO_ENCODERS if container == "mp4" else AUDIO_ENCODERS
+    for track in config.audio_tracks:
+        encoder = config.audio_encoder(track)
+        if encoder not in allowed_encoders:
+            raise ValueError(
+                f"audio track {track.title!r}: encoder {encoder!r} isn't supported for "
+                f"{container} output - expected one of {', '.join(allowed_encoders)}"
+            )
+        if encoder == "copy" and (track.kind == "downmix" or track.channel_fix):
+            raise ValueError(
+                f"audio track {track.title!r}: encoder 'copy' can't be combined with a downmix "
+                f"or channelFix filter - filtering requires re-encoding"
+            )
+        if encoder == "copy" and config.video.speed_correction is not None:
+            raise ValueError(
+                f"audio track {track.title!r}: encoder 'copy' can't be combined with "
+                f"video.speedCorrection - the audio has to be re-timed along with the video"
+            )
+    if container == "mp4":
+        if config.font_attach_dir:
+            raise ValueError("fontAttachDir isn't supported for mp4 output - MP4 has no attachments")
+        if config.video.dovi_rpu:
+            raise ValueError("video.doviRpu is only supported for mkv output")

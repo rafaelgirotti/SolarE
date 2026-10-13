@@ -6,7 +6,8 @@
     "fileMatchRegex": "\\.mkv$"
   },
   "output": {
-    "root": "/path/to/your/output/directory"
+    "root": "/path/to/your/output/directory",
+    "container": "mkv"
   },
   "naming": {
     "transforms": [
@@ -42,7 +43,8 @@
         "channelFix": null,
         "sourceLanguage": null,
         "languageIetf": null,
-        "codec": null
+        "codec": null,
+        "encoder": null
       }
     ]
   },

@@ -44,7 +44,7 @@ def output_name(config: TitleConfig, src_file: Path) -> str:
     base = clean_title(config, src_file)
     if config.naming_append_suffix:
         base += config.naming_append_suffix
-    return f"{base}.mkv"
+    return f"{base}.{config.output_container}"
 
 
 def build_queue(config: TitleConfig) -> list[QueueItem]:
@@ -71,19 +71,38 @@ def build_queue(config: TitleConfig) -> list[QueueItem]:
             )
         out_folder.mkdir(parents=True, exist_ok=True)
 
-        files = sorted(src_folder.glob("*.mkv"), key=lambda p: p.name)
+        # Suffix comparison against the already-validated source.extensions allowlist, not a glob
+        # built from config text - keeps the scan confined to this one folder, and matches
+        # uppercase suffixes too (phones and cameras commonly write ".MP4").
+        files = sorted(
+            (p for p in src_folder.iterdir() if p.is_file() and p.suffix.lower() in config.source_extensions),
+            key=lambda p: p.name,
+        )
         if config.file_match_regex:
             pattern = re.compile(config.file_match_regex)
             files = [f for f in files if pattern.search(f.name)]
 
         for f in files:
+            out_file = out_folder / output_name(config, f)
+            if out_file.resolve() == f.resolve():
+                # Possible once source and output share a container and folder: the final mux
+                # runs ffmpeg with -y, which would overwrite the source while still reading it.
+                raise RuntimeError(
+                    f"Output path for {f.name} is the source file itself - change naming or "
+                    f"output.root so they differ."
+                )
             items.append(
                 QueueItem(
                     src_file=f,
-                    out_file=out_folder / output_name(config, f),
+                    out_file=out_file,
                     log_base=out_folder / (re.sub(r"[^\w]", "_", f.stem) + ".encode-log.txt"),
                 )
             )
+
+    # With source and output sharing a folder and extension, a previous run's finished output
+    # matches the source scan too - never treat one item's output as another item's source.
+    outputs = {item.out_file.resolve() for item in items}
+    items = [item for item in items if item.src_file.resolve() not in outputs]
 
     if not items:
         raise RuntimeError(

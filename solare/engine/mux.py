@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from solare.engine.config import Subtitle, TitleConfig
-from solare.engine.ffprobe import count_streams, find_stream_index
+from solare.engine.ffprobe import count_streams, find_stream_index, get_codec_name
 from solare.engine.opensubtitles import download_path
 from solare.engine.queue import clean_title
 
@@ -72,6 +72,7 @@ def mux_episode(
     subtitle_sources: list[SubtitleSource],
     out_file: Path,
 ) -> None:
+    is_mp4 = config.output_container == "mp4"
     args = ["ffmpeg", "-y", "-i", str(video_file)]
     for audio_file in audio_files:
         args += ["-i", str(audio_file)]
@@ -93,34 +94,49 @@ def mux_episode(
         else:
             args += ["-map", f"{external_input_idx[i]}:s:0"]
     args += ["-map_chapters", str(src_input_idx)]
-    # Carries over the source's own embedded attachments (fonts, almost always what these are on
-    # a BD/anime remux) - needed for styled ASS subtitles to render with their intended fonts
-    # instead of a fallback. "?" makes this an optional stream specifier - a no-op, not an error,
-    # on a source with zero attachments. Verified directly: mapped correctly against a real
-    # source with 12 font attachments. Separate from font_attach_dir below, which adds *new*
-    # fonts from an external directory (e.g. for an externally-sourced subtitle track) - the two
-    # are complementary, not overlapping.
-    args += ["-map", f"{src_input_idx}:t?"]
 
-    if config.font_attach_dir:
-        font_dir = Path(config.font_attach_dir)
-        if font_dir.is_dir():
-            font_files = sorted(p for p in font_dir.iterdir() if p.is_file())
-            # ffmpeg's -metadata:s:t:N addresses attachment-type OUTPUT streams by their overall
-            # relative index, not specifically among the ones -attach just added - confirmed
-            # live: with the source's own passed-through fonts absent from that count, the
-            # metadata landed on a passed-through stream instead of the new one, leaving the
-            # actually-new attachment with no mimetype and ffmpeg refusing to mux at all. Offset
-            # by however many attachment streams the source already has ahead of these.
-            attach_offset = count_streams(src_file, "t")
-            for i, font_file in enumerate(font_files):
-                t_index = attach_offset + i
-                args += [
-                    "-attach", str(font_file),
-                    f"-metadata:s:t:{t_index}", "mimetype=application/x-truetype-font",
-                ]
+    if is_mp4:
+        # MP4 has no attachment streams and only one subtitle format (mov_text) - text subtitles
+        # are converted to it (styling is dropped); bitmap ones are rejected before encoding even
+        # starts, see check_container_compatibility(). font_attach_dir is rejected at config load.
+        args += ["-c:v", "copy", "-c:a", "copy", "-c:s", "mov_text"]
+        if config.video.codec == "x265":
+            # ffmpeg's default HEVC sample entry in MP4 is hev1; Apple players (and plenty of
+            # others that follow them) only accept hvc1.
+            args += ["-tag:v", "hvc1"]
+        # Index (moov atom) at the start of the file, so playback/streaming can begin before the
+        # whole file has downloaded - expected by browsers and messaging apps.
+        args += ["-movflags", "+faststart"]
+    else:
+        # Carries over the source's own embedded attachments (fonts, almost always what these are
+        # on a BD/anime remux) - needed for styled ASS subtitles to render with their intended
+        # fonts instead of a fallback. "?" makes this an optional stream specifier - a no-op, not
+        # an error, on a source with zero attachments. Verified directly: mapped correctly against
+        # a real source with 12 font attachments. Separate from font_attach_dir below, which adds
+        # *new* fonts from an external directory (e.g. for an externally-sourced subtitle track) -
+        # the two are complementary, not overlapping.
+        args += ["-map", f"{src_input_idx}:t?"]
 
-    args += ["-c:v", "copy", "-c:a", "copy", "-c:s", "copy", "-c:t", "copy"]
+        if config.font_attach_dir:
+            font_dir = Path(config.font_attach_dir)
+            if font_dir.is_dir():
+                font_files = sorted(p for p in font_dir.iterdir() if p.is_file())
+                # ffmpeg's -metadata:s:t:N addresses attachment-type OUTPUT streams by their
+                # overall relative index, not specifically among the ones -attach just added -
+                # confirmed live: with the source's own passed-through fonts absent from that
+                # count, the metadata landed on a passed-through stream instead of the new one,
+                # leaving the actually-new attachment with no mimetype and ffmpeg refusing to mux
+                # at all. Offset by however many attachment streams the source already has ahead
+                # of these.
+                attach_offset = count_streams(src_file, "t")
+                for i, font_file in enumerate(font_files):
+                    t_index = attach_offset + i
+                    args += [
+                        "-attach", str(font_file),
+                        f"-metadata:s:t:{t_index}", "mimetype=application/x-truetype-font",
+                    ]
+
+        args += ["-c:v", "copy", "-c:a", "copy", "-c:s", "copy", "-c:t", "copy"]
 
     # Release-group metadata (a container/stream title inherited from the source) otherwise
     # passes straight through even though the video itself was fully re-encoded, not copied -
@@ -137,11 +153,47 @@ def mux_episode(
             f"-metadata:s:s:{s}", f"title={sub.title}",
             f"-metadata:s:s:{s}", f"language={sub.language}",
         ]
-        if sub.language_ietf:
+        if sub.language_ietf and not is_mp4:  # a Matroska-only element
             args += [f"-metadata:s:s:{s}", f"language-ietf={sub.language_ietf}"]
 
     args += [str(out_file)]
     subprocess.run(args, check=True, capture_output=True, text=True)
+
+
+# Image-based subtitle formats - MP4's only subtitle format (mov_text) is text, and ffmpeg can't
+# convert between the two without OCR.
+_BITMAP_SUBTITLE_CODECS = frozenset({"hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle", "xsub"})
+
+
+def check_container_compatibility(config: TitleConfig, src_file: Path) -> None:
+    """Checks the parts of the output container's constraints that depend on the source file
+    itself (config.load_config already rejects the purely config-level ones) - run before the
+    video encode, so an incompatible subtitle track fails in seconds instead of after the
+    encode has finished. A no-op for Matroska, which accepts every subtitle format."""
+    if config.output_container != "mp4":
+        return
+    for sub in config.subtitles:
+        if sub.source == "opensubtitles":
+            continue  # always downloaded as SubRip (text) - see engine/opensubtitles.py
+        if sub.source == "external":
+            if not sub.external_pattern:
+                continue  # resolve_subtitle_sources raises the real error for this at mux time
+            path = Path(sub.external_pattern.replace("{EP}", ""))
+            if not path.is_file():
+                continue  # likewise - an {EP} pattern can't be resolved this early
+            codec = get_codec_name(path, "s:0")
+        else:
+            idx = find_stream_index(
+                src_file, "s", sub.language, sub.exclude_title_match, sub.match_title, sub.codec
+            )
+            if idx < 0:
+                continue  # resolve_subtitle_sources raises the real "no match" error at mux time
+            codec = get_codec_name(src_file, f"s:{idx}")
+        if codec in _BITMAP_SUBTITLE_CODECS:
+            raise ValueError(
+                f"Subtitle {sub.title!r} is image-based ({codec}) - MP4 output only supports "
+                f"text subtitles. Use mkv output, or drop this subtitle track."
+            )
 
 
 def add_subtitle_to_existing_output(
