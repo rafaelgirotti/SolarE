@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -135,3 +136,86 @@ def count_packets(file: Path, stream_selector: str) -> int:
     )
     output = result.stdout.strip()
     return int(output) if output else 0
+
+
+@dataclass
+class VideoColorInfo:
+    pix_fmt: str = ""
+    color_space: str = ""
+    color_transfer: str = ""
+    color_primaries: str = ""
+    max_luminance: float | None = None
+    max_cll: int | None = None
+
+    @property
+    def is_hdr(self) -> bool:
+        return (
+            self.color_transfer in ("smpte2084", "arib-std-b67")
+            or self.color_primaries == "bt2020"
+            or self.color_space in ("bt2020nc", "bt2020c")
+        )
+
+    @property
+    def hdr_type(self) -> str | None:
+        if self.color_transfer == "smpte2084":
+            return "hdr10"
+        if self.color_transfer == "arib-std-b67":
+            return "hlg"
+        if self.is_hdr:
+            return "hdr"
+        return None
+
+
+def get_video_color_info(file: Path) -> VideoColorInfo:
+    """Inspect video stream 0's color metadata (space, transfer, primaries, pixel format)
+    and any mastering display / content light level HDR side data."""
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=pix_fmt,color_space,color_transfer,color_primaries:stream_side_data_list=side_data_type,max_luminance,max_content",
+            "-of", "json", "--", str(file),
+        ],
+        capture_output=True, text=True, check=True,
+    )
+    data = json.loads(result.stdout)
+    streams = data.get("streams", [])
+    if not streams:
+        return VideoColorInfo()
+    stream = streams[0]
+    pix_fmt = stream.get("pix_fmt") or ""
+    color_space = stream.get("color_space") or ""
+    color_transfer = stream.get("color_transfer") or ""
+    color_primaries = stream.get("color_primaries") or ""
+
+    max_lum: float | None = None
+    max_cll: int | None = None
+    for side in stream.get("side_data_list", []):
+        stype = side.get("side_data_type", "")
+        if "Mastering display" in stype:
+            raw_lum = side.get("max_luminance")
+            if raw_lum:
+                try:
+                    if "/" in str(raw_lum):
+                        n, d = str(raw_lum).split("/")
+                        max_lum = float(n) / float(d)
+                    else:
+                        max_lum = float(raw_lum)
+                except (ValueError, ZeroDivisionError):
+                    pass
+        elif "Content light level" in stype:
+            raw_content = side.get("max_content")
+            if raw_content:
+                try:
+                    max_cll = int(raw_content)
+                except ValueError:
+                    pass
+
+    return VideoColorInfo(
+        pix_fmt=pix_fmt,
+        color_space=color_space,
+        color_transfer=color_transfer,
+        color_primaries=color_primaries,
+        max_luminance=max_lum,
+        max_cll=max_cll,
+    )

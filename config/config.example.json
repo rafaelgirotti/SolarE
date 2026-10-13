@@ -27,7 +27,8 @@
     "tempDir": null,
     "deinterlace": null,
     "speedCorrection": null,
-    "upscale": null
+    "upscale": null,
+    "tonemap": null
   },
   "audio": {
     "sourceLanguage": "jpn",

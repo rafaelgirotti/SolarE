@@ -20,7 +20,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from solare.engine.config import TitleConfig, UpscaleSettings
+from solare.engine.config import TitleConfig, UpscaleSettings, VideoSettings
+from solare.engine.ffprobe import VideoColorInfo, get_video_color_info
 from solare.engine.toolpath import shared_tools_root
 
 _LOADERS = {
@@ -32,7 +33,8 @@ _LOADERS = {
 
 def needs_preprocessing(config: TitleConfig) -> bool:
     return (
-        config.video.deinterlace is not None
+        config.video.tonemap is not None
+        or config.video.deinterlace is not None
         or config.video.speed_correction is not None
         or config.video.upscale is not None
     )
@@ -141,6 +143,93 @@ def generate_proxy_vpy(config: TitleConfig, src_file: Path, out_vpy: Path, chunk
     return out_vpy
 
 
+_COLOR_SPACE_TO_ZIMG = {
+    "bt2020nc": "2020ncl",
+    "bt2020c": "2020cl",
+    "bt709": "709",
+}
+
+_TRANSFER_TO_ZIMG = {
+    "smpte2084": "st2084",
+    "arib-std-b67": "std-b67",
+    "bt709": "709",
+}
+
+_PRIMARIES_TO_ZIMG = {
+    "bt2020": "2020",
+    "bt709": "709",
+}
+
+_PIX_FMT_TO_VS = {
+    "yuv420p": "vs.YUV420P8",
+    "yuv420p10le": "vs.YUV420P10",
+    "yuv420p12le": "vs.YUV420P12",
+    "yuv444p": "vs.YUV444P8",
+    "yuv444p10le": "vs.YUV444P10",
+}
+
+
+def _hable_scale(w: float) -> float:
+    a, b, c, d, e, f = 0.15, 0.50, 0.10, 0.20, 0.02, 0.30
+    val = ((w * (a * w + c * b) + d * e) / (w * (a * w + b) + d * f)) - (e / f)
+    return 1.0 / val if val > 0 else 1.0
+
+
+def _append_tonemap_lines(lines: list[str], video: VideoSettings, color_info: VideoColorInfo) -> None:
+    tonemap = video.tonemap
+    assert tonemap is not None
+
+    matrix_in = _COLOR_SPACE_TO_ZIMG.get(color_info.color_space, "2020ncl")
+    transfer_in = _TRANSFER_TO_ZIMG.get(color_info.color_transfer, "st2084")
+    primaries_in = _PRIMARIES_TO_ZIMG.get(color_info.color_primaries, "2020")
+
+    # Source peak in nits (default 1000.0 if not specified in metadata or config)
+    if tonemap.source_peak is not None:
+        peak = tonemap.source_peak
+    elif color_info.max_cll and color_info.max_cll > 0:
+        peak = float(color_info.max_cll)
+    elif color_info.max_luminance and color_info.max_luminance > 0:
+        peak = float(color_info.max_luminance)
+    else:
+        peak = 1000.0
+
+    # 1. Linearize HDR (PQ or HLG with BT.2020 primaries) to Linear RGB (RGBS) in BT.709 primaries
+    lines.append(
+        f'clip = core.resize.Bicubic(clip, format=vs.RGBS, '
+        f'matrix_in_s="{matrix_in}", transfer_in_s="{transfer_in}", primaries_in_s="{primaries_in}", '
+        f'transfer_s="linear", primaries_s="709")'
+    )
+
+    if tonemap.exposure != 1.0:
+        lines.append(f'clip = core.std.Expr(clip, expr="x {tonemap.exposure:.4f} *")')
+
+    # White point normalized to 100 nits SDR reference
+    w = max(peak / 100.0, 1.0)
+
+    # 2. Tone mapping curve in linear light
+    if tonemap.algorithm == "hable":
+        scale = _hable_scale(w)
+        expr = f"x 0 max dup 0.15 * 0.05 + * 0.004 + x 0 max dup 0.15 * 0.5 + * 0.06 + / 0.0666667 - {scale:.6f} *"
+        lines.append(f'clip = core.std.Expr(clip, expr="{expr}")')
+    elif tonemap.algorithm == "reinhard":
+        fw = (w * 2.0) / (1.0 + w)
+        scale = 1.0 / fw if fw > 0 else 1.0
+        expr = f"x 0 max dup {w*w:.4f} / 1 + * 1 x 0 max + / {scale:.6f} *"
+        lines.append(f'clip = core.std.Expr(clip, expr="{expr}")')
+    elif tonemap.algorithm == "mobius":
+        scale = _hable_scale(w)
+        expr = f"x 0 max dup 0.15 * 0.05 + * 0.004 + x 0 max dup 0.15 * 0.5 + * 0.06 + / 0.0666667 - {scale:.6f} *"
+        lines.append(f'clip = core.std.Expr(clip, expr="{expr}")')
+
+    # 3. Convert to target SDR format with BT.709 transfer, matrix, and primaries
+    target_format = _PIX_FMT_TO_VS.get(video.pix_fmt, "vs.YUV420P8")
+    lines.append(
+        f'clip = core.resize.Bicubic(clip, format={target_format}, '
+        f'matrix_s="709", transfer_s="709", primaries_s="709", '
+        f'dither_type="error_diffusion")'
+    )
+
+
 def _build_vpy_lines(
     config: TitleConfig, src_file: Path, out_vpy: Path, chunk_method: str, include_upscale: bool
 ) -> list[str]:
@@ -159,6 +248,11 @@ def _build_vpy_lines(
         "",
         f'clip = {loader}(r"{src_file}"{cache_kwarg})',
     ]
+
+    if video.tonemap is not None:
+        color_info = get_video_color_info(src_file)
+        if color_info.is_hdr:
+            _append_tonemap_lines(lines, video, color_info)
 
     if video.upscale is not None:
         # Crop moves into the script (applied here, ahead of everything else) only in this branch

@@ -24,11 +24,12 @@ that spawns mid-pause is caught on the very next check instead of running unpaus
 pause ends.
 
 ## Optional preprocessing is a VapourSynth script, not a separate pass
-Deinterlacing and linear speed correction (a source mastered at the wrong frame rate) are both
-expressed as a generated VapourSynth script that `av1an` reads directly as its own input -
-`av1an` accepts a `.vpy` script exactly as it would a video file, so chunking and encoding read
-straight off the filtered output. No intermediate file is written and no separate full-file
-transcode pass runs first.
+HDR-to-SDR tone mapping (Hable filmic curve, Mobius, or extended Reinhard with automatic HDR10/HLG
+transfer, color matrix, and mastering peak luminance detection), deinterlacing, and linear speed
+correction (a source mastered at the wrong frame rate) are all expressed as a generated VapourSynth
+script that `av1an` reads directly as its own input - `av1an` accepts a `.vpy` script exactly as it
+would a video file, so chunking and encoding read straight off the filtered output. No intermediate
+file is written and no separate full-file transcode pass runs first.
 
 ## Supported containers and audio formats
 Matroska (`.mkv`) is the default container, paired with Opus audio by default for efficient

@@ -107,6 +107,16 @@ class UpscaleSettings:
     # estimate that's way off reads as more broken than an honest "we don't know").
 
 
+TONEMAP_ALGORITHMS = ("hable", "mobius", "reinhard")
+
+
+@dataclass
+class TonemapSettings:
+    algorithm: str = "hable"  # "hable", "mobius", "reinhard"
+    source_peak: float | None = None  # source peak in nits (None = auto-detect via ffprobe, fallback 1000.0)
+    exposure: float = 1.0  # linear exposure multiplier before tone curve
+
+
 @dataclass
 class VideoSettings:
     codec: str
@@ -123,6 +133,7 @@ class VideoSettings:
     deinterlace: DeinterlaceSettings | None = None
     speed_correction: SpeedCorrection | None = None
     upscale: UpscaleSettings | None = None
+    tonemap: TonemapSettings | None = None
 
 
 @dataclass
@@ -299,6 +310,37 @@ def _parse_upscale(entry: dict | None) -> UpscaleSettings | None:
     )
 
 
+def _parse_tonemap(entry: object) -> TonemapSettings | None:
+    if entry is None or entry is False:
+        return None
+    if entry is True or entry == "auto":
+        return TonemapSettings()
+    if isinstance(entry, str):
+        if entry not in TONEMAP_ALGORITHMS:
+            raise ValueError(
+                f"video.tonemap: unsupported algorithm {entry!r} - expected one of "
+                f"{', '.join(TONEMAP_ALGORITHMS)}"
+            )
+        return TonemapSettings(algorithm=entry)
+    if isinstance(entry, dict):
+        algo = entry.get("algorithm", "hable")
+        if algo not in TONEMAP_ALGORITHMS:
+            raise ValueError(
+                f"video.tonemap.algorithm: unsupported algorithm {algo!r} - expected one of "
+                f"{', '.join(TONEMAP_ALGORITHMS)}"
+            )
+        source_peak = None
+        if "sourcePeak" in entry and entry["sourcePeak"] is not None:
+            source_peak = float(entry["sourcePeak"])
+            if source_peak <= 0:
+                raise ValueError("video.tonemap.sourcePeak must be positive")
+        exposure = float(entry.get("exposure", 1.0))
+        if exposure <= 0:
+            raise ValueError("video.tonemap.exposure must be positive")
+        return TonemapSettings(algorithm=algo, source_peak=source_peak, exposure=exposure)
+    raise ValueError(f"video.tonemap: expected boolean, string, or object, got {type(entry).__name__}")
+
+
 def _parse_solar_gate(entry: dict | None) -> SolarGate | None:
     if entry is None:
         return None
@@ -332,6 +374,7 @@ def load_config(path: str | Path) -> TitleConfig:
         deinterlace=_parse_deinterlace(video_data.get("deinterlace")),
         speed_correction=_parse_speed_correction(video_data.get("speedCorrection")),
         upscale=_parse_upscale(video_data.get("upscale")),
+        tonemap=_parse_tonemap(video_data.get("tonemap")),
     )
 
     source = data["source"]
